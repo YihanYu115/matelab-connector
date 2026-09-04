@@ -8,14 +8,14 @@ The default listener is `127.0.0.1:8765` with local authentication disabled. Any
 
 ## First setup
 
-For ordinary desktop use, double-click `start-matelab-bridge.cmd`, log in from the Chinese GUI, select a notebook, and submit a test note. Manual GUI records use MatElab `/create` and `/update`, so they do not require pre-installed Connector templates.
+For ordinary desktop use, launch `MatElabConnector.exe` on Windows or `MatElab Connector.app` on macOS, log in from the native Chinese console, select a notebook, and submit a test note. The Windows source checkout launcher `start-matelab-bridge.cmd` prefers the already-built executable. Manual console records use MatElab `/create` and `/update`, so they do not require pre-installed Connector templates.
 
 For structured submissions from Data Vault or analysis programs:
 
 1. Create the three MatElab templates from `matelab_bridge/template_snapshots/` and configure their exact names, stable notebook IDs, notebooks, and numeric owner ID.
-2. Log in from the GUI or run `matelab-bridge auth login USERNAME`; the password is never stored.
+2. Log in from the native console or run `matelab-bridge auth login USERNAME`; the password is never stored.
 3. Run `matelab-bridge doctor --online`.
-4. Start `matelab-bridge gui --no-browser` or `matelab-bridge serve` under the chosen Windows service supervisor.
+4. Keep the native Connector running, or start `matelab-bridge serve` under the chosen service supervisor.
 5. Submit a synthetic capture and verify it independently through MatElab `/items`, `/search`, and `/export`.
 
 For a hardened Windows deployment, run the command from a dedicated unprivileged service account and use an approved supervisor such as WinSW or NSSM. Configure automatic restart, a private data directory ACL, and stdout/stderr rotation. This repository does not download or silently install a third-party supervisor.

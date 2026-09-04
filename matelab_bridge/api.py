@@ -34,6 +34,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import Field, SecretStr, ValidationError
 
+from . import __version__
 from .artifact_ingress import ArtifactIngressService
 from .canonical import canonical_json, sha256_tag, strict_json_loads
 from .config import BridgeConfig
@@ -52,6 +53,7 @@ from .models import (
     StrictModel,
     SyncReceipt,
 )
+from .port_manager import NATIVE_CONSOLE_API_VERSION
 from .security import redact_text
 from .storage import BridgeStore
 from .sync_engine import SyncEngine, run_worker
@@ -239,7 +241,7 @@ def create_app(
 
     app = FastAPI(
         title="MatElab Desktop Bridge",
-        version="0.1.0",
+        version=__version__,
         description="Durable local Capture Envelope submission gateway",
         lifespan=lifespan,
     )
@@ -716,8 +718,35 @@ def create_app(
         )
 
     @app.get("/healthz", tags=["operations"])
-    def health() -> dict[str, str]:
-        return {"status": "ok", "service": "matelab-desktop-bridge"}
+    def health() -> dict[str, str | int]:
+        return {
+            "status": "ok",
+            "service": "matelab-desktop-bridge",
+            "version": __version__,
+            "console_api": NATIVE_CONSOLE_API_VERSION,
+        }
+
+    @app.get(
+        "/v1/console/summary",
+        dependencies=[Depends(authorizer.dependency("status"))],
+        tags=["connector-console"],
+    )
+    def console_summary() -> dict[str, Any]:
+        return {
+            "service": "running",
+            "api_url": f"http://127.0.0.1:{config.port}",
+            "matelab": session_payload(),
+            "queue": store.metrics(),
+        }
+
+    @app.get(
+        "/v1/console/tasks",
+        response_model=list[SyncReceipt],
+        dependencies=[Depends(authorizer.dependency("status"))],
+        tags=["connector-console"],
+    )
+    def console_tasks(limit: int = Query(default=100, ge=1, le=500)) -> list[SyncReceipt]:
+        return store.list_receipts(limit=limit)
 
     @app.post(
         "/v1/captures",

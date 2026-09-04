@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "dist\MatElabConnector.exe" (
+  start "" "dist\MatElabConnector.exe"
+  exit /b 0
+)
 if not exist ".venv\Scripts\matelab-bridge.exe" (
   where py >nul 2>nul
   if errorlevel 1 (
@@ -22,5 +26,13 @@ if not exist ".venv\Scripts\matelab-bridge.exe" (
     exit /b 1
   )
 )
-".venv\Scripts\matelab-bridge.exe" gui
+if not exist ".venv\Scripts\matelab-connector.exe" (
+  ".venv\Scripts\python.exe" -m pip install -e .
+  if errorlevel 1 (
+    echo Connector update failed. Check the network and try again.
+    pause
+    exit /b 1
+  )
+)
+start "" ".venv\Scripts\matelab-connector.exe"
 if errorlevel 1 pause

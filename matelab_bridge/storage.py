@@ -682,6 +682,15 @@ class BridgeStore:
         with self.connect() as connection:
             return self._receipt_in_connection(connection, capture_id)
 
+    def list_receipts(self, *, limit: int = 100) -> list[SyncReceipt]:
+        safe_limit = max(1, min(limit, 500))
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT capture_id FROM captures ORDER BY updated_at DESC LIMIT ?",
+                (safe_limit,),
+            ).fetchall()
+            return [self._receipt_in_connection(connection, row["capture_id"]) for row in rows]
+
     def _receipt_in_connection(
         self, connection: sqlite3.Connection, capture_id: str
     ) -> SyncReceipt:

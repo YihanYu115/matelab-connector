@@ -16,8 +16,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.error import URLError
-from urllib.request import urlopen
 
 import typer
 
@@ -28,6 +26,7 @@ from .diagnostics import create_backup, create_diagnostic_bundle, doctor, verify
 from .fake_matelab import create_fake_matelab_app
 from .matelab_client import MatelabClient
 from .models import CaptureKind
+from .port_manager import is_running_bridge, port_is_available
 from .reconciliation import Reconciler
 from .sdk import BridgeClient
 from .service import serve as run_service
@@ -65,25 +64,16 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 
 def _is_running_bridge(port: int) -> bool:
-    try:
-        with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=0.4) as response:
-            payload = json.loads(response.read(4096))
-    except (OSError, URLError, ValueError):
-        return False
-    return isinstance(payload, dict) and payload.get("service") == "matelab-desktop-bridge"
+    return is_running_bridge(port)
 
 
 def _port_is_available(host: str, port: int) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind((host, port))
-    except OSError:
-        return False
-    return True
+    return port_is_available(host, port)
 
 
 def _select_gui_port(config: BridgeConfig) -> tuple[int, bool]:
     """Return a usable port and whether an existing Connector owns it."""
+    # Keep these aliases as seams for CLI tests and downstream launchers.
     for port in range(config.port, min(config.port + 20, 65536)):
         if _is_running_bridge(port):
             return port, True

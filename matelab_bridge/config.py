@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from dotenv import load_dotenv
 
 def _env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(f"MATELAB_BRIDGE_{name}", default)
+
+
+def _default_data_dir() -> Path:
+    system = platform.system()
+    if system == "Windows":
+        root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    elif system == "Darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    return root / "MatElabBridge"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +57,7 @@ class BridgeConfig:
     @classmethod
     def from_env(cls) -> BridgeConfig:
         load_dotenv(encoding="utf-8")
-        default_data = Path(os.environ.get("LOCALAPPDATA", str(Path.cwd()))) / "MatElabBridge"
+        default_data = _default_data_dir()
         config = cls(
             data_dir=Path(_env("DATA_DIR", str(default_data)) or default_data),
             host=_env("HOST", "127.0.0.1") or "127.0.0.1",

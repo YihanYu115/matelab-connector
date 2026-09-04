@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matelab-desktop-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Durable local submission gateway for MatElab electronic lab notebooks"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,9 +28,16 @@ dev = [
   "pytest-cov>=5,<8",
   "ruff>=0.6,<1",
 ]
+build = [
+  "pillow>=11,<13",
+  "pyinstaller>=6.20,<7",
+]
 
 [project.scripts]
 matelab-bridge = "matelab_bridge.cli:app"
+
+[project.gui-scripts]
+matelab-connector = "matelab_bridge.native_app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["matelab_bridge"]
@@ -65,6 +72,8 @@ testpaths = ["tests"]
 branch = true
 omit = [
   "matelab_bridge/cli.py",
+  "matelab_bridge/embedded_service.py",
+  "matelab_bridge/native_app.py",
   "matelab_bridge/service.py",
 ]
 

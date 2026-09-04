@@ -133,6 +133,12 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
         assert api_submission.json()["status_url"].startswith("/v1/captures/")
         api_manifest = store.get_manifest(api_submission.json()["capture_id"])
         assert api_manifest.producer.kind == "local_api"
+        summary = client.get("/v1/console/summary")
+        assert summary.status_code == 200
+        assert summary.json()["service"] == "running"
+        tasks = client.get("/v1/console/tasks")
+        assert tasks.status_code == 200
+        assert tasks.json()[0]["capture_id"] == api_submission.json()["capture_id"]
 
         mismatch = client.post(
             "/v1/ui/manual-submissions",
