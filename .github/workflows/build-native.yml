@@ -2,6 +2,11 @@ name: Build and release native Connector
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to publish after a successful build (optional)
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -56,10 +61,11 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
-          archive: false
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -78,13 +84,14 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         shell: bash
         run: |
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" release-assets/* \
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" release-assets/* \
               --clobber --repo "${GITHUB_REPOSITORY}"
           else
-            gh release create "${GITHUB_REF_NAME}" release-assets/* \
-              --generate-notes --title "MatElab Connector ${GITHUB_REF_NAME}" \
+            gh release create "${RELEASE_TAG}" release-assets/* \
+              --generate-notes --title "MatElab Connector ${RELEASE_TAG}" \
               --verify-tag --repo "${GITHUB_REPOSITORY}"
           fi
