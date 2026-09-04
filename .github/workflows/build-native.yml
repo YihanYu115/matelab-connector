@@ -1,4 +1,4 @@
-name: Build native Connector
+name: Build and release native Connector
 
 on:
   workflow_dispatch:
@@ -23,8 +23,8 @@ jobs:
             artifact: MatElabConnector-macos-x64.zip
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -37,12 +37,54 @@ jobs:
       - name: Package Windows application
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -LiteralPath dist/MatElabConnector.exe -DestinationPath "dist/${{ matrix.artifact }}"
+        run: |
+          $staging = "dist/release-windows-x64"
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item -LiteralPath dist/MatElabConnector.exe -Destination $staging
+          Copy-Item -LiteralPath LICENSE,THIRD_PARTY_NOTICES.md -Destination $staging
+          Compress-Archive -Path "$staging/*" -DestinationPath "dist/${{ matrix.artifact }}"
       - name: Package macOS application
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "dist/MatElab Connector.app" "dist/${{ matrix.artifact }}"
+        run: |
+          staging="dist/release-${{ matrix.artifact }}"
+          mkdir "$staging"
+          cp -R "dist/MatElab Connector.app" "$staging/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "$staging/"
+          ditto -c -k --sequesterRsrc "$staging" "dist/${{ matrix.artifact }}"
       - name: Upload native application
         uses: actions/upload-artifact@v7
         with:
+          name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
           archive: false
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged applications
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum *.zip > SHA256SUMS.txt
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/* \
+              --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${GITHUB_REF_NAME}" release-assets/* \
+              --generate-notes --title "MatElab Connector ${GITHUB_REF_NAME}" \
+              --verify-tag --repo "${GITHUB_REPOSITORY}"
+          fi
