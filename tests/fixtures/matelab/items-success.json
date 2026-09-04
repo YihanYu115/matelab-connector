@@ -1,0 +1,22 @@
+{
+  "code": 0,
+  "items": [
+    {
+      "id": 12345,
+      "datetime_create": "2026-09-04 12:00",
+      "datetime_modify": "2026-09-04 12:01",
+      "datetime_locked": null,
+      "title": "fixture",
+      "comm": "fixture",
+      "sn": "MBFIXTUREUID",
+      "locked": false,
+      "template_id": 3,
+      "keywords": ["matelab-bridge"],
+      "config": [],
+      "signed": false,
+      "version": 1,
+      "subtype": 0
+    }
+  ]
+}
+

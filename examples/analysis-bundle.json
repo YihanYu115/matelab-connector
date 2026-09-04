@@ -1,0 +1,85 @@
+{
+  "schema": "capture-envelope/v1",
+  "capture_id": "example-analysis-20260904-001",
+  "capture_kind": "analysis_run",
+  "occurred_at": "2026-09-04T09:00:00+08:00",
+  "producer": {
+    "kind": "agent",
+    "producer_id": "analysis-client-example",
+    "actor_id": "researcher-example",
+    "run_id": "analysis-run-example-001"
+  },
+  "scope": {
+    "sample": "chip-A",
+    "device": "device-A",
+    "components": ["q1"],
+    "topic": "calibration-analysis"
+  },
+  "source": null,
+  "execution": {
+    "entrypoint": "analysis.py",
+    "script_snapshot_hash": "sha256:fa0d0adf1f9090fc4e7f4a616458f9de045a3d1c877652325bb4a584c29cc79e",
+    "git_commit": "0123456789abcdef",
+    "dirty_hash": null,
+    "environment_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "parameters": {"estimator": "mean"},
+    "random_seed": null,
+    "status": "success"
+  },
+  "summary": {
+    "actions": ["computed arithmetic mean"],
+    "observations": ["mean is 2.0 arb."],
+    "interpretations": [],
+    "confidence": null,
+    "rationale": "The arithmetic mean is the declared estimator for this example.",
+    "limitations": ["synthetic input"]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "analysis-script",
+      "role": "source_snapshot",
+      "filename": "analysis.py",
+      "mime_type": "text/x-python",
+      "size": 219,
+      "sha256": "fa0d0adf1f9090fc4e7f4a616458f9de045a3d1c877652325bb4a584c29cc79e",
+      "ingress": {"mode": "stream", "upload_id": "example-analysis-script"},
+      "transfer_policy": "copy",
+      "required": true
+    },
+    {
+      "artifact_id": "analysis-result",
+      "role": "analysis_output",
+      "filename": "analysis-result.json",
+      "mime_type": "application/json",
+      "size": 38,
+      "sha256": "47d4cadd89f25467d187bdaeb866c869f4e6534181aae6a1f4a71aebd3cb6fcb",
+      "ingress": {"mode": "stream", "upload_id": "example-analysis-result"},
+      "transfer_policy": "copy",
+      "required": true
+    }
+  ],
+  "routing_hints": {},
+  "extensions": {
+    "analysis": {
+      "analysis_run_id": "analysis-run-example-001",
+      "inputs": [
+        {
+          "kind": "datavault_dataset",
+          "locator": "datavault://example/session/dataset-1",
+          "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "immutable_revision": "1"
+        }
+      ],
+      "method_name": "arithmetic-mean",
+      "method_version": "1",
+      "bounded_log": "analysis completed",
+      "generation": {
+        "machine_generated": true,
+        "model": "example-model",
+        "prompt_template_version": "analysis-prompt/v1",
+        "tool_versions": {"python": "3.12"},
+        "human_confirmed": false
+      }
+    }
+  }
+}

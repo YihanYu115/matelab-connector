@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matelab-bridge.local/schemas/capture-envelope.v1.schema.json",
+  "title": "Capture Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "capture_id", "capture_kind", "occurred_at", "producer"],
+  "properties": {
+    "schema": {"const": "capture-envelope/v1"},
+    "capture_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}[A-Za-z0-9]$|^[A-Za-z0-9]$"},
+    "capture_kind": {"enum": ["experiment_run", "analysis_run", "derivation", "field_note", "correction"]},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "producer_id", "actor_id"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "producer_id": {"type": "string", "minLength": 1, "maxLength": 255},
+        "actor_id": {"type": "string", "minLength": 1, "maxLength": 255},
+        "run_id": {"type": ["string", "null"], "maxLength": 255}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample": {"type": ["string", "null"], "maxLength": 255},
+        "device": {"type": ["string", "null"], "maxLength": 255},
+        "components": {"type": "array", "maxItems": 256, "items": {"type": "string"}},
+        "topic": {"type": ["string", "null"], "maxLength": 255}
+      }
+    },
+    "source": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "locator"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "locator": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "immutable_revision": {"type": ["string", "null"], "maxLength": 1024},
+        "content_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-fA-F]{64}$"}
+      }
+    },
+    "execution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "entrypoint": {"type": ["string", "null"], "maxLength": 1024},
+        "script_snapshot_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+        "git_commit": {"type": ["string", "null"], "maxLength": 128},
+        "dirty_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+        "environment_hash": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+        "parameters": {"type": "object"},
+        "random_seed": {"type": ["integer", "string", "null"]},
+        "status": {"type": ["string", "null"], "maxLength": 64}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {"type": "array", "items": {"type": "string"}},
+        "observations": {"type": "array", "items": {"type": "string"}},
+        "interpretations": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "rationale": {"type": ["string", "null"], "maxLength": 100000},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "artifacts": {"type": "array", "maxItems": 1024, "items": {"$ref": "artifact.v1.schema.json"}},
+    "routing_hints": {"type": "object"},
+    "extensions": {"type": "object"}
+  }
+}

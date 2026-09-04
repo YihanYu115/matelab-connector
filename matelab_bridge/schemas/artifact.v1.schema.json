@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matelab-bridge.local/schemas/artifact.v1.schema.json",
+  "title": "Artifact Descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_id", "role", "filename", "mime_type", "size", "sha256", "ingress", "transfer_policy"],
+  "properties": {
+    "artifact_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,126}[A-Za-z0-9]$|^[A-Za-z0-9]$"},
+    "role": {"type": "string", "minLength": 1, "maxLength": 64},
+    "filename": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\\\\u0000]+$"},
+    "mime_type": {"type": "string", "minLength": 1, "maxLength": 255},
+    "size": {"type": "integer", "minimum": 0, "maximum": 4294967296},
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "ingress": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "upload_id"],
+          "properties": {"mode": {"const": "stream"}, "upload_id": {"type": "string", "minLength": 1, "maxLength": 128}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {"mode": {"const": "none"}, "upload_id": {"type": "null"}}
+        }
+      ]
+    },
+    "transfer_policy": {"enum": ["copy", "manifest_only", "preview_only"]},
+    "required": {"type": "boolean", "default": true}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"transfer_policy": {"const": "manifest_only"}}},
+      "then": {"properties": {"ingress": {"properties": {"mode": {"const": "none"}}}}},
+      "else": {"properties": {"ingress": {"properties": {"mode": {"const": "stream"}}}}}
+    }
+  ]
+}
+

@@ -1,0 +1,44 @@
+{
+  "schema": "capture-envelope/v1",
+  "capture_id": "example-experiment-20260904-001",
+  "capture_kind": "experiment_run",
+  "occurred_at": "2026-09-04T08:21:13+08:00",
+  "producer": {
+    "kind": "qualab",
+    "producer_id": "control-pc-01",
+    "actor_id": "operator-example",
+    "run_id": "run-example-001"
+  },
+  "scope": {
+    "sample": "chip-A",
+    "device": "device-A",
+    "components": ["q1"],
+    "topic": "calibration"
+  },
+  "source": {
+    "kind": "datavault_dataset",
+    "locator": "datavault://example/session/dataset-1",
+    "immutable_revision": "1",
+    "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "execution": {
+    "entrypoint": "spectroscopy_auto",
+    "script_snapshot_hash": null,
+    "git_commit": "0123456789abcdef",
+    "dirty_hash": null,
+    "environment_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "parameters": {"frequency_hz": 5000000000},
+    "status": "success"
+  },
+  "summary": {
+    "actions": ["swept drive frequency"],
+    "observations": ["single resonance observed"],
+    "interpretations": [],
+    "confidence": null,
+    "limitations": []
+  },
+  "artifacts": [],
+  "routing_hints": {},
+  "extensions": {}
+}
+

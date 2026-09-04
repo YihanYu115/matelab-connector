@@ -1,0 +1,41 @@
+{
+  "template_id": "matelab-auto-experiment/v1",
+  "version": "1",
+  "modules": [
+    {
+      "name": "Connector Metadata",
+      "type": "form",
+      "fields": [
+        "Connector Schema",
+        "Capture ID",
+        "Capture Hash",
+        "Capture Kind",
+        "Occurred At",
+        "Received At",
+        "Producer Kind",
+        "Producer ID",
+        "Actor ID",
+        "Run ID",
+        "Source Kind",
+        "Source Locator",
+        "Source Revision",
+        "Source Hash",
+        "Sample",
+        "Device",
+        "Components",
+        "Topic",
+        "Template ID",
+        "Template Version",
+        "Template Hash"
+      ]
+    },
+    {"name": "Capture Envelope JSON", "type": "richtext"},
+    {"name": "Summary", "type": "richtext"},
+    {
+      "name": "Artifacts",
+      "type": "table",
+      "columns": ["Artifact ID", "Role", "Filename", "MIME", "Size", "SHA256", "Transfer Policy", "File"]
+    }
+  ]
+}
+

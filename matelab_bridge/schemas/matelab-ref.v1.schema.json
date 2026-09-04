@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matelab-bridge.local/schemas/matelab-ref.v1.schema.json",
+  "title": "MatElab Record Reference v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["server_id", "owner_id", "notebook_id", "notebook_name_snapshot", "record_id", "record_uid", "record_version", "locked", "signed", "export_sha256"],
+  "properties": {
+    "server_id": {"type": "string"},
+    "owner_id": {"type": "string"},
+    "notebook_id": {"type": "string"},
+    "notebook_name_snapshot": {"type": "string"},
+    "record_id": {"type": "string"},
+    "record_uid": {"type": "string"},
+    "record_version": {"type": "integer", "minimum": 1},
+    "locked": {"type": "boolean"},
+    "signed": {"type": "boolean"},
+    "created_at": {"type": ["string", "null"]},
+    "modified_at": {"type": ["string", "null"]},
+    "export_sha256": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"},
+    "attachment_hashes": {"type": "array", "items": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}},
+    "mutable_source": {"type": "boolean", "default": true}
+  }
+}
+
