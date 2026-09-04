@@ -110,6 +110,19 @@ class NativeConnectorClient:
         value = self._result(self.http.get("/v1/ui/notebooks", headers=self._headers("ui")))
         return [dict(item) for item in value.get("notebooks", [])]
 
+    def set_default_notebook(self, notebook: dict[str, Any]) -> dict[str, Any]:
+        value = self._result(
+            self.http.put(
+                "/v1/ui/default-notebook",
+                headers=self._headers("ui"),
+                json={
+                    "notebook_id": str(notebook["id"]),
+                    "notebook_name": str(notebook["name"]),
+                },
+            )
+        )
+        return dict(value)
+
     def summary(self) -> dict[str, Any]:
         value = self._result(self.http.get("/v1/console/summary", headers=self._headers("status")))
         return dict(value)

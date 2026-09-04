@@ -10,10 +10,27 @@ from matelab_bridge.native_client import ConnectorApiError, NativeConnectorClien
 
 
 def test_desktop_settings_round_trip_and_invalid_fallback(tmp_path: Path) -> None:
-    settings = DesktopSettings(api_port=9988)
+    settings = DesktopSettings(
+        api_port=9988,
+        default_notebook_id="book-21",
+        default_notebook_name="测试本",
+    )
     settings.save(tmp_path)
     assert DesktopSettings.load(tmp_path, default_port=8765) == settings
     assert (tmp_path / "desktop-settings.json").read_bytes().endswith(b"\n")
+
+    (tmp_path / "desktop-settings.json").write_text(
+        '{"api_port": 8877}', encoding="utf-8"
+    )
+    legacy = DesktopSettings.load(tmp_path, default_port=8765)
+    assert legacy == DesktopSettings(api_port=8877)
+
+    (tmp_path / "desktop-settings.json").write_text(
+        '{"api_port": 8877, "default_notebook_id": "book-21"}', encoding="utf-8"
+    )
+    incomplete = DesktopSettings.load(tmp_path, default_port=8765)
+    assert incomplete.default_notebook_id is None
+    assert incomplete.default_notebook_name is None
 
     (tmp_path / "desktop-settings.json").write_text("not-json", encoding="utf-8")
     assert DesktopSettings.load(tmp_path, default_port=8765).api_port == 8765
@@ -34,6 +51,16 @@ def test_native_client_session_notebooks_tasks_and_problem(tmp_path: Path) -> No
             return httpx.Response(
                 200,
                 json={"notebooks": [{"id": "7", "name": "测试本", "editable": True}]},
+            )
+        if request.url.path == "/v1/ui/default-notebook":
+            assert request.method == "PUT"
+            assert request.headers.get("X-Bridge-UI-CSRF") == "native-test-token"
+            return httpx.Response(
+                200,
+                json={
+                    "configured": True,
+                    "notebook": {"id": "7", "name": "测试本"},
+                },
             )
         if request.url.path == "/v1/console/tasks":
             return httpx.Response(200, json=[{"capture_id": "manual-1", "state": "complete"}])
@@ -56,6 +83,7 @@ def test_native_client_session_notebooks_tasks_and_problem(tmp_path: Path) -> No
     ) as client:
         assert client.session()["authenticated"] is True
         assert client.notebooks()[0]["name"] == "测试本"
+        assert client.set_default_notebook({"id": "7", "name": "测试本"})["configured"]
         assert client.tasks()[0]["capture_id"] == "manual-1"
         try:
             client.logout()

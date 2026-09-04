@@ -37,8 +37,10 @@
 
 连接器启动时，本地 API 默认为 `http://127.0.0.1:8765`，实际地址以控制台为准：
 
+- 中文快速接入：[只传标题、正文和附件](docs/api-quickstart.zh-CN.md)
 - 交互式 API 文档：`http://127.0.0.1:8765/docs`
 - 健康检查：`GET /healthz`
+- 查询 API 默认记录本：`GET /v1/default-notebook`
 - 简单的正文/附件上传：`POST /v1/manual-submissions`（multipart）
 - 创建结构化记录：`POST /v1/captures`
 - 上传附件：`PUT /v1/captures/{capture_id}/artifacts/{artifact_id}`
@@ -47,7 +49,9 @@
 
 完整错误格式与调用方处理规则见 [错误处理规范](docs/error-handling.md)。默认只允许本机访问；如需监听局域网，必须在 `.env` 中启用三种彼此不同的作用域 Token。
 
-自动调用 `POST /v1/manual-submissions` 时应为一次逻辑提交生成 `Idempotency-Key` 请求头，并在超时重试时原样复用。同一个 Key 和完全相同的字段/附件会返回原 `capture_id`；同一个 Key 携带不同内容会返回 HTTP 409。没有该请求头时，每次调用都视为一条新记录。
+先在原生控制台“手动提交”页选择一个可写记录本并点击“设为 API 默认记录本”。此后调用 `POST /v1/manual-submissions` 只需发送 `title`、`content` 和可选的 `attachments`；仍可同时传入 `notebook_id` 与 `notebook_name` 来覆盖默认值。
+
+自动调用时应为一次逻辑提交生成 `Idempotency-Key` 请求头，并在超时重试时原样复用。同一个 Key 和完全相同的字段/附件会返回原 `capture_id`；同一个 Key 携带不同内容会返回 HTTP 409。没有该请求头时，每次调用都视为一条新记录。
 
 ## 开发和离线验证
 

@@ -10,6 +10,8 @@ The default listener is `127.0.0.1:8765` with local authentication disabled. Any
 
 For ordinary desktop use, launch `MatElabConnector.exe` on Windows or `MatElab Connector.app` on macOS, log in from the native Chinese console, select a notebook, and submit a test note. The Windows source checkout launcher `start-matelab-bridge.cmd` prefers the already-built executable. Manual console records use MatElab `/create` and `/update`, so they do not require pre-installed Connector templates.
 
+For local API callers, select a writable notebook on the native console's manual submission page and click `设为 API 默认记录本`. The selection is stored in `desktop-settings.json`. `POST /v1/manual-submissions` may then omit both `notebook_id` and `notebook_name`; explicit ID/name pairs remain supported as per-request overrides. See [中文 API 快速接入](api-quickstart.zh-CN.md).
+
 For structured submissions from Data Vault or analysis programs:
 
 1. Create the three MatElab templates from `matelab_bridge/template_snapshots/` and configure their exact names, stable notebook IDs, notebooks, and numeric owner ID.

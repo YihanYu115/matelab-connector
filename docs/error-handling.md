@@ -37,6 +37,8 @@
 | 404 | `capture_not_found` | 本机没有该提交编号 | 检查 `capture_id` |
 | 404 | `notebook_not_found` | 记录本被改名、删除或权限已变化 | 刷新记录本并重新选择；不得猜测或回退到默认记录本 |
 | 403 | `notebook_not_writable` | 选择了公开或只读记录本 | 选择自己的记录本，或申请共享记录本的编辑权限 |
+| 409 | `default_notebook_not_configured` | 调用方省略了记录本，但 Connector 尚未设置默认记录本 | 在原生控制台选择记录本并点击“设为 API 默认记录本” |
+| 422 | `notebook_selection_incomplete` | 只提供了 `notebook_id` 或 `notebook_name` 之一 | 同时提供两个字段，或同时省略以使用默认记录本 |
 | 409 | `capture_identity_conflict` | 同一 `capture_id` 或 `Idempotency-Key` 对应不同内容 | 为新内容生成新的编号；重试原操作时保持内容不变 |
 | 409 | `artifact_conflict` | 附件策略或状态冲突 | 核对 manifest 与附件编号 |
 | 409 | `invalid_state` | 当前同步状态不接受该操作 | 先查询回执；失败任务使用维护重试接口 |

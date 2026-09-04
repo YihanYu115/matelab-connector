@@ -108,6 +108,7 @@ class NativeConnectorApp:
 
         base_config = BridgeConfig.from_env()
         settings = DesktopSettings.load(base_config.data_dir, default_port=base_config.port)
+        self.settings = settings
         self.config = replace(base_config, port=settings.api_port)
         self.service = EmbeddedBridgeService(self.config)
         self.client: NativeConnectorClient | None = None
@@ -430,6 +431,7 @@ class ConsolePage(tk.Frame):
         self.auth_state = tk.StringVar(value="正在检查")
         self.queue_summary = tk.StringVar(value="尚无任务")
         self.notice = tk.StringVar()
+        self.default_notebook_status = tk.StringVar(value="尚未设置 API 默认记录本")
 
         sidebar = tk.Frame(self, bg="#122D23", width=235, padx=22, pady=28)
         sidebar.pack(side="left", fill="y")
@@ -653,7 +655,24 @@ class ConsolePage(tk.Frame):
             state="readonly",
             style="Connector.TCombobox",
         )
-        self.notebook_combo.pack(fill="x", pady=(6, 12), ipady=2)
+        self.notebook_combo.pack(fill="x", pady=(6, 6), ipady=2)
+        default_row = tk.Frame(form, bg=COLORS["panel"])
+        default_row.pack(fill="x", pady=(0, 12))
+        self.default_notebook_label = tk.Label(
+            default_row,
+            textvariable=self.default_notebook_status,
+            font=("Microsoft YaHei UI", 9),
+            fg=COLORS["muted"],
+            bg=COLORS["panel"],
+            anchor="w",
+        )
+        self.default_notebook_label.pack(side="left", fill="x", expand=True)
+        self.save_default_button = self._action_button(
+            default_row,
+            "设为 API 默认记录本",
+            self.save_default_notebook,
+        )
+        self.save_default_button.pack(side="right")
         self.title_value = tk.StringVar()
         self.actor_value = tk.StringVar(value=getpass.getuser())
         for label, variable in (("标题", self.title_value), ("记录人（可选）", self.actor_value)):
@@ -849,10 +868,34 @@ class ConsolePage(tk.Frame):
         editable = [item for item in self.notebooks if item.get("editable")]
         values = [f"{item['name']}  ·  {item.get('access', 'accessible')}" for item in editable]
         self.notebook_combo.configure(values=values)
-        if values and self.notebook_value.get() not in values:
+        default_index = next(
+            (
+                index
+                for index, item in enumerate(editable)
+                if item["id"] == self.app.settings.default_notebook_id
+                and item["name"] == self.app.settings.default_notebook_name
+            ),
+            None,
+        )
+        if default_index is not None:
+            self.notebook_combo.current(default_index)
+        elif values and self.notebook_value.get() not in values:
             self.notebook_combo.current(0)
         if not values:
             self.notebook_value.set("")
+        self._update_default_notebook_status(default_index is not None)
+
+    def _update_default_notebook_status(self, available: bool) -> None:
+        name = self.app.settings.default_notebook_name
+        if available and name:
+            self.default_notebook_status.set(f"API 默认：{name}")
+            self.default_notebook_label.configure(fg=COLORS["green"])
+        elif self.app.settings.default_notebook_id:
+            self.default_notebook_status.set("已保存的 API 默认记录本当前不可用，请重新设置")
+            self.default_notebook_label.configure(fg=COLORS["warning"])
+        else:
+            self.default_notebook_status.set("尚未设置 API 默认记录本")
+            self.default_notebook_label.configure(fg=COLORS["muted"])
 
     def selected_notebook(self) -> dict[str, Any] | None:
         index = self.notebook_combo.current()
@@ -896,6 +939,35 @@ class ConsolePage(tk.Frame):
             self.notice.set(f"已读取 {editable} 个可写记录本、{readonly} 个只读记录本")
 
         self.app._run(self.app.require_client().notebooks, success, self._show_operation_error)
+
+    def save_default_notebook(self) -> None:
+        notebook = self.selected_notebook()
+        if notebook is None:
+            self._show_operation_error(ValueError("请先选择一个可写记录本。"))
+            return
+        self.save_default_button.configure(state="disabled", text="正在保存…")
+        self.notice.set("正在验证并保存 API 默认记录本…")
+
+        def success(result: dict[str, Any]) -> None:
+            saved = dict(result["notebook"])
+            self.app.settings = replace(
+                self.app.settings,
+                default_notebook_id=str(saved["id"]),
+                default_notebook_name=str(saved["name"]),
+            )
+            self.save_default_button.configure(state="normal", text="设为 API 默认记录本")
+            self._update_default_notebook_status(True)
+            self.notice.set(f"API 默认记录本已设为：{saved['name']}")
+
+        def failure(exc: BaseException) -> None:
+            self.save_default_button.configure(state="normal", text="设为 API 默认记录本")
+            self._show_operation_error(exc)
+
+        self.app._run(
+            lambda: self.app.require_client().set_default_notebook(notebook),
+            success,
+            failure,
+        )
 
     def choose_attachments(self) -> None:
         values = filedialog.askopenfilenames(title="选择记录附件", parent=self)
@@ -1019,7 +1091,8 @@ class ConsolePage(tk.Frame):
             self._show_operation_error(ValueError("API 端口必须在 1024–65535 之间。"))
             return
         if port == self.app.service.port:
-            DesktopSettings(api_port=port).save(self.app.config.data_dir)
+            self.app.settings = replace(self.app.settings, api_port=port)
+            self.app.settings.save(self.app.config.data_dir)
             self.notice.set("API 端口设置已保存")
             return
         if not self.app.service.owned:
@@ -1031,17 +1104,19 @@ class ConsolePage(tk.Frame):
         old_client = self.app.require_client()
         new_config = replace(self.app.config, port=port)
 
-        def operation() -> tuple[NativeConnectorClient, int]:
+        def operation() -> tuple[NativeConnectorClient, int, DesktopSettings]:
             old_client.close()
             self.app.service.restart(new_config)
             client = NativeConnectorClient(self.app.service.base_url, self.app.service.config)
-            DesktopSettings(api_port=port).save(new_config.data_dir)
-            return client, self.app.service.port
+            settings = replace(self.app.settings, api_port=port)
+            settings.save(new_config.data_dir)
+            return client, self.app.service.port, settings
 
-        def success(result: tuple[NativeConnectorClient, int]) -> None:
-            client, actual_port = result
+        def success(result: tuple[NativeConnectorClient, int, DesktopSettings]) -> None:
+            client, actual_port, settings = result
             self.app.client = client
             self.app.config = self.app.service.config
+            self.app.settings = settings
             self.save_port_button.configure(state="normal", text="保存并重启 API")
             self.port_value.set(str(actual_port))
             self.api_url.set(f"API  {self.app.service.base_url}")

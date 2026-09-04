@@ -2,7 +2,7 @@
 
 MatElab Connector is distributed under the MIT License. Its packaged applications include
 third-party components governed by their own licenses. The following inventory reflects the
-Python dependency set used for the Windows `v0.2.1` build; later builds may contain newer
+Python dependency set used for the Windows `v0.3.0` build; later builds may contain newer
 compatible versions permitted by `pyproject.toml`.
 
 | Component | Version | License | Project |

@@ -54,6 +54,14 @@ class NotebookNotWritableError(BridgeError):
     code = "notebook_not_writable"
 
 
+class DefaultNotebookNotConfiguredError(BridgeError):
+    code = "default_notebook_not_configured"
+
+
+class NotebookSelectionIncompleteError(BridgeError):
+    code = "notebook_selection_incomplete"
+
+
 class MappingConflictError(BridgeError):
     code = "mapping_conflict"
 

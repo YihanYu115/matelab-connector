@@ -13,6 +13,7 @@ import socket
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from html import escape
 from importlib.resources import files as resource_files
@@ -38,11 +39,14 @@ from . import __version__
 from .artifact_ingress import ArtifactIngressService
 from .canonical import canonical_json, sha256_tag, strict_json_loads
 from .config import BridgeConfig
+from .desktop_settings import DesktopSettings
 from .errors import (
     BridgeError,
+    DefaultNotebookNotConfiguredError,
     MatelabContractError,
     NotebookNotFoundError,
     NotebookNotWritableError,
+    NotebookSelectionIncompleteError,
 )
 from .matelab_client import MatelabClient
 from .models import (
@@ -68,6 +72,29 @@ LOGGER = logging.getLogger("matelab_bridge.api")
 class UiLoginRequest(StrictModel):
     username: str = Field(min_length=1, max_length=255)
     password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class UiDefaultNotebookRequest(StrictModel):
+    notebook_id: str = Field(min_length=1, max_length=255)
+    notebook_name: str = Field(min_length=1, max_length=255)
+
+
+class DefaultNotebookReference(StrictModel):
+    id: str
+    name: str
+
+
+class DefaultNotebookStatus(StrictModel):
+    configured: bool
+    notebook: DefaultNotebookReference | None
+
+
+class ManualSubmissionAccepted(StrictModel):
+    capture_id: str
+    sync_id: str
+    state: SyncState
+    status_url: str
+    duplicate: bool
 
 
 def _request_id(request: Request) -> str:
@@ -276,6 +303,8 @@ def create_app(
             "artifact_not_found": 404,
             "notebook_not_found": 404,
             "notebook_not_writable": 403,
+            "default_notebook_not_configured": 409,
+            "notebook_selection_incomplete": 422,
             "capture_identity_conflict": 409,
             "artifact_conflict": 409,
             "mapping_conflict": 409,
@@ -294,6 +323,10 @@ def create_app(
             "artifact_not_found": "找不到声明的附件。",
             "notebook_not_found": "所选记录本已不存在或当前账号无权访问。",
             "notebook_not_writable": "所选记录本是只读记录本, 不能上传记录。",
+            "default_notebook_not_configured": "尚未设置供本地 API 使用的默认记录本。",
+            "notebook_selection_incomplete": (
+                "notebook_id 和 notebook_name 必须同时提供, 或者同时省略以使用默认记录本。"
+            ),
             "capture_identity_conflict": "同一提交编号对应了不同内容。",
             "artifact_conflict": "附件状态或内容发生冲突。",
             "mapping_conflict": "本地记录与 MatElab 记录的映射发生冲突。",
@@ -312,6 +345,10 @@ def create_app(
             "artifact_not_found": "检查附件编号是否与清单一致。",
             "notebook_not_found": "刷新记录本列表并重新选择。",
             "notebook_not_writable": "选择“我的”记录本, 或请记录本所有者授予编辑权限。",
+            "default_notebook_not_configured": (
+                "打开 Connector 的“手动提交”页面, 选择记录本并点击“设为 API 默认记录本”。"
+            ),
+            "notebook_selection_incomplete": "补齐记录本 ID 和名称, 或删除这两个字段。",
             "capture_identity_conflict": (
                 "为不同内容使用新的 capture_id; 手动上传则改用新的 Idempotency-Key。"
             ),
@@ -436,6 +473,15 @@ def create_app(
             raise MatelabContractError(str(exc)) from exc
         return notebooks
 
+    def load_default_notebook() -> dict[str, str] | None:
+        settings = DesktopSettings.load(config.data_dir, default_port=config.port)
+        if not settings.default_notebook_id or not settings.default_notebook_name:
+            return None
+        return {
+            "id": settings.default_notebook_id,
+            "name": settings.default_notebook_name,
+        }
+
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
         return RedirectResponse(url="/ui", status_code=307)
@@ -520,6 +566,43 @@ def create_app(
     async def ui_notebooks() -> dict[str, Any]:
         return {"notebooks": await load_notebooks()}
 
+    @app.put(
+        "/v1/ui/default-notebook",
+        response_model=DefaultNotebookStatus,
+        dependencies=[Depends(require_ui_csrf)],
+        tags=["desktop-gui"],
+    )
+    async def ui_set_default_notebook(selection: UiDefaultNotebookRequest) -> dict[str, Any]:
+        notebook_id = selection.notebook_id.strip()
+        notebook_name = selection.notebook_name.strip()
+        notebooks = await load_notebooks()
+        selected = next(
+            (
+                notebook
+                for notebook in notebooks
+                if notebook["id"] == notebook_id and notebook["name"] == notebook_name
+            ),
+            None,
+        )
+        if selected is None:
+            raise NotebookNotFoundError(
+                "the selected notebook ID/name pair is not in the current MatElab list"
+            )
+        if not selected["editable"]:
+            raise NotebookNotWritableError(
+                "the selected MatElab notebook is public or read-only"
+            )
+        settings = DesktopSettings.load(config.data_dir, default_port=config.port)
+        replace(
+            settings,
+            default_notebook_id=selected["id"],
+            default_notebook_name=selected["name"],
+        ).save(config.data_dir)
+        return {
+            "configured": True,
+            "notebook": {"id": selected["id"], "name": selected["name"]},
+        }
+
     @app.get(
         "/v1/ui/captures/{capture_id}",
         response_model=SyncReceipt,
@@ -541,8 +624,8 @@ def create_app(
         *,
         title: str,
         content: str,
-        notebook_id: str,
-        notebook_name: str,
+        notebook_id: str | None,
+        notebook_name: str | None,
         actor_id: str | None,
         attachments: list[UploadFile] | None,
         operation: str,
@@ -550,6 +633,12 @@ def create_app(
         status_prefix: str,
         idempotency_key: str | None,
     ) -> dict[str, Any]:
+        notebook_id = (notebook_id or "").strip() or None
+        notebook_name = (notebook_name or "").strip() or None
+        if bool(notebook_id) != bool(notebook_name):
+            raise NotebookSelectionIncompleteError(
+                "notebook_id and notebook_name must be provided together"
+            )
         if idempotency_key is not None and not AUDIT_ID_RE.fullmatch(idempotency_key):
             raise HTTPException(
                 status_code=400,
@@ -650,6 +739,15 @@ def create_app(
                         "status_url": f"{status_prefix}/{prior.capture_id}",
                         "duplicate": True,
                     }
+
+            if notebook_id is None or notebook_name is None:
+                default_notebook = load_default_notebook()
+                if default_notebook is None:
+                    raise DefaultNotebookNotConfiguredError(
+                        "no default notebook is configured for API submissions"
+                    )
+                notebook_id = default_notebook["id"]
+                notebook_name = default_notebook["name"]
 
             notebooks = await load_notebooks()
             selected = next(
@@ -756,6 +854,7 @@ def create_app(
 
     @app.post(
         "/v1/ui/manual-submissions",
+        response_model=ManualSubmissionAccepted,
         status_code=202,
         dependencies=[Depends(require_ui_csrf)],
         tags=["desktop-gui"],
@@ -786,6 +885,7 @@ def create_app(
 
     @app.post(
         "/v1/manual-submissions",
+        response_model=ManualSubmissionAccepted,
         status_code=202,
         dependencies=[Depends(authorizer.dependency("submit"))],
         tags=["captures"],
@@ -794,8 +894,14 @@ def create_app(
         request: Request,
         title: Annotated[str, Form(min_length=1, max_length=255)],
         content: Annotated[str, Form(min_length=1, max_length=100_000)],
-        notebook_id: Annotated[str, Form(min_length=1, max_length=255)],
-        notebook_name: Annotated[str, Form(min_length=1, max_length=255)],
+        notebook_id: Annotated[
+            str | None,
+            Form(max_length=255, description="可选; 与 notebook_name 同时省略时使用默认记录本"),
+        ] = None,
+        notebook_name: Annotated[
+            str | None,
+            Form(max_length=255, description="可选; 与 notebook_id 同时省略时使用默认记录本"),
+        ] = None,
         actor_id: Annotated[str | None, Form(max_length=255)] = None,
         attachments: Annotated[list[UploadFile] | None, File()] = None,
         idempotency_key: str | None = Header(default=None),
@@ -814,6 +920,16 @@ def create_app(
             status_prefix="/v1/captures",
             idempotency_key=idempotency_key,
         )
+
+    @app.get(
+        "/v1/default-notebook",
+        response_model=DefaultNotebookStatus,
+        dependencies=[Depends(authorizer.dependency("status"))],
+        tags=["connector-console"],
+    )
+    def api_default_notebook() -> dict[str, Any]:
+        notebook = load_default_notebook()
+        return {"configured": notebook is not None, "notebook": notebook}
 
     @app.get("/healthz", tags=["operations"])
     def health() -> dict[str, str | int]:
@@ -835,6 +951,7 @@ def create_app(
             "api_url": f"http://127.0.0.1:{config.port}",
             "matelab": session_payload(),
             "queue": store.metrics(),
+            "default_notebook": load_default_notebook(),
         }
 
     @app.get(

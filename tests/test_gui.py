@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from matelab_bridge.api import create_app
 from matelab_bridge.canonical import canonical_json, sha256_tag
 from matelab_bridge.config import BridgeConfig
+from matelab_bridge.desktop_settings import DesktopSettings
 from matelab_bridge.errors import MatelabAuthRequiredError
 from matelab_bridge.models import CaptureEnvelope, SyncState
 from matelab_bridge.storage import BridgeStore
@@ -236,6 +237,103 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
         assert resumed.json()["resumed_tasks"] == 1
         assert store.get_receipt(capture_id).state == SyncState.READY
     assert remote.closed is True
+
+
+def test_api_uses_persisted_default_notebook_and_preserves_idempotency(
+    config: BridgeConfig,
+) -> None:
+    store = BridgeStore(config.database_path)
+    remote = GuiMatelab()
+    engine = SyncEngine(config, store, remote)  # type: ignore[arg-type]
+    with TestClient(create_app(config, store=store, engine=engine)) as client:
+        token = _csrf(client)
+        ui_headers = {"X-Bridge-UI-CSRF": token}
+        client.post(
+            "/v1/ui/login",
+            headers=ui_headers,
+            json={"username": "user", "password": "pass"},
+        ).raise_for_status()
+
+        current = client.get("/v1/default-notebook")
+        assert current.status_code == 200
+        assert current.json() == {"configured": False, "notebook": None}
+
+        missing = client.post(
+            "/v1/manual-submissions",
+            data={"title": "没有默认本", "content": "应返回明确错误"},
+        )
+        assert missing.status_code == 409
+        assert missing.json()["error"]["code"] == "default_notebook_not_configured"
+        assert "设为 API 默认记录本" in missing.json()["error"]["action"]
+
+        incomplete = client.post(
+            "/v1/manual-submissions",
+            data={"title": "字段不完整", "content": "只给 ID", "notebook_id": "21"},
+        )
+        assert incomplete.status_code == 422
+        assert incomplete.json()["error"]["code"] == "notebook_selection_incomplete"
+
+        denied = client.put(
+            "/v1/ui/default-notebook",
+            json={"notebook_id": "21", "notebook_name": "我的记录本"},
+        )
+        assert denied.status_code == 403
+        saved = client.put(
+            "/v1/ui/default-notebook",
+            headers=ui_headers,
+            json={"notebook_id": "21", "notebook_name": "我的记录本"},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["notebook"] == {"id": "21", "name": "我的记录本"}
+        settings = DesktopSettings.load(config.data_dir, default_port=config.port)
+        assert settings.default_notebook_id == "21"
+        assert settings.default_notebook_name == "我的记录本"
+        assert client.get("/v1/default-notebook").json() == {
+            "configured": True,
+            "notebook": {"id": "21", "name": "我的记录本"},
+        }
+
+        request_data = {"title": "默认路由记录", "content": "调用方没有传记录本字段"}
+        request_headers = {"Idempotency-Key": "default-notebook-operation-001"}
+        first = client.post(
+            "/v1/manual-submissions",
+            headers=request_headers,
+            data=request_data,
+        )
+        assert first.status_code == 202
+        first_manifest = store.get_manifest(first.json()["capture_id"])
+        assert first_manifest.routing_hints["target_notebook_id"] == "21"
+        assert first_manifest.routing_hints["target_notebook"] == "我的记录本"
+
+        changed = client.put(
+            "/v1/ui/default-notebook",
+            headers=ui_headers,
+            json={"notebook_id": "book-shared", "notebook_name": "协作记录本"},
+        )
+        assert changed.status_code == 200
+        replay = client.post(
+            "/v1/manual-submissions",
+            headers=request_headers,
+            data=request_data,
+        )
+        assert replay.status_code == 202
+        assert replay.json()["duplicate"] is True
+        assert replay.json()["capture_id"] == first.json()["capture_id"]
+
+        next_submission = client.post(
+            "/v1/manual-submissions",
+            data={"title": "新的默认路由", "content": "应该进入协作记录本"},
+        )
+        assert next_submission.status_code == 202
+        next_manifest = store.get_manifest(next_submission.json()["capture_id"])
+        assert next_manifest.routing_hints["target_notebook_id"] == "book-shared"
+        assert next_manifest.routing_hints["target_notebook"] == "协作记录本"
+
+        summary = client.get("/v1/console/summary").json()
+        assert summary["default_notebook"] == {
+            "id": "book-shared",
+            "name": "协作记录本",
+        }
 
 
 class ManualSyncMatelab:

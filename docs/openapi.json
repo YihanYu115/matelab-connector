@@ -67,16 +67,30 @@
             "type": "string"
           },
           "notebook_id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Notebook Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "可选; 与 notebook_name 同时省略时使用默认记录本",
+            "title": "Notebook Id"
           },
           "notebook_name": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Notebook Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "可选; 与 notebook_id 同时省略时使用默认记录本",
+            "title": "Notebook Name"
           },
           "title": {
             "maxLength": 255,
@@ -87,9 +101,7 @@
         },
         "required": [
           "title",
-          "content",
-          "notebook_id",
-          "notebook_name"
+          "content"
         ],
         "title": "Body_api_manual_submission_v1_manual_submissions_post",
         "type": "object"
@@ -190,6 +202,50 @@
         "title": "CaptureAccepted",
         "type": "object"
       },
+      "DefaultNotebookReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "DefaultNotebookReference",
+        "type": "object"
+      },
+      "DefaultNotebookStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "notebook": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DefaultNotebookReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "notebook"
+        ],
+        "title": "DefaultNotebookStatus",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -201,6 +257,39 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ManualSubmissionAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_id": {
+            "title": "Capture Id",
+            "type": "string"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SyncState"
+          },
+          "status_url": {
+            "title": "Status Url",
+            "type": "string"
+          },
+          "sync_id": {
+            "title": "Sync Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capture_id",
+          "sync_id",
+          "state",
+          "status_url",
+          "duplicate"
+        ],
+        "title": "ManualSubmissionAccepted",
         "type": "object"
       },
       "MatelabRecordRef": {
@@ -437,6 +526,29 @@
         "title": "SyncState",
         "type": "string"
       },
+      "UiDefaultNotebookRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "notebook_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Id",
+            "type": "string"
+          },
+          "notebook_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notebook_id",
+          "notebook_name"
+        ],
+        "title": "UiDefaultNotebookRequest",
+        "type": "object"
+      },
       "UiLoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -507,7 +619,7 @@
   "info": {
     "description": "Durable local Capture Envelope submission gateway",
     "title": "MatElab Desktop Bridge",
-    "version": "0.2.1"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1337,6 +1449,55 @@
         ]
       }
     },
+    "/v1/default-notebook": {
+      "get": {
+        "operationId": "api_default_notebook_v1_default_notebook_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultNotebookStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Default Notebook",
+        "tags": [
+          "connector-console"
+        ]
+      }
+    },
     "/v1/manual-submissions": {
       "post": {
         "description": "Simple multipart endpoint for local programs that submit human-readable notes.",
@@ -1390,9 +1551,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Api Manual Submission V1 Manual Submissions Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ManualSubmissionAccepted"
                 }
               }
             },
@@ -1468,6 +1627,65 @@
           }
         },
         "summary": "Ui Capture Status",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/default-notebook": {
+      "put": {
+        "operationId": "ui_set_default_notebook_v1_ui_default_notebook_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiDefaultNotebookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultNotebookStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Set Default Notebook",
         "tags": [
           "desktop-gui"
         ]
@@ -1637,9 +1855,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ui Manual Submission V1 Ui Manual Submissions Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ManualSubmissionAccepted"
                 }
               }
             },
