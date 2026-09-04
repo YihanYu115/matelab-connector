@@ -12,9 +12,12 @@ import threading
 import time
 import uuid
 import webbrowser
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import typer
 
@@ -59,6 +62,34 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise typer.BadParameter("manifest root must be a JSON object")
     return value
+
+
+def _is_running_bridge(port: int) -> bool:
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=0.4) as response:
+            payload = json.loads(response.read(4096))
+    except (OSError, URLError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("service") == "matelab-desktop-bridge"
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((host, port))
+    except OSError:
+        return False
+    return True
+
+
+def _select_gui_port(config: BridgeConfig) -> tuple[int, bool]:
+    """Return a usable port and whether an existing Connector owns it."""
+    for port in range(config.port, min(config.port + 20, 65536)):
+        if _is_running_bridge(port):
+            return port, True
+        if _port_is_available(config.host, port):
+            return port, False
+    raise RuntimeError(f"No free Connector port was found from {config.port} to {config.port + 19}")
 
 
 def _artifact_mapping(values: list[str]) -> dict[str, Path]:
@@ -201,14 +232,30 @@ def gui(
 ) -> None:
     """启动本地 API, 并打开中文桌面操作界面。"""
     config = BridgeConfig.from_env()
+    try:
+        selected_port, already_running = _select_gui_port(config)
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    url = f"http://127.0.0.1:{selected_port}/ui"
+    if already_running:
+        typer.echo(f"MatElab Connector is already running at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return
+    if selected_port != config.port:
+        typer.echo(
+            f"Port {config.port} is used by another application; "
+            f"MatElab Connector will use port {selected_port}."
+        )
+        config = replace(config, port=selected_port)
     if open_browser:
-        url = f"http://127.0.0.1:{config.port}/ui"
 
         def open_when_ready() -> None:
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 try:
-                    with socket.create_connection(("127.0.0.1", config.port), timeout=0.4):
+                    with socket.create_connection(("127.0.0.1", selected_port), timeout=0.4):
                         webbrowser.open(url)
                         return
                 except OSError:

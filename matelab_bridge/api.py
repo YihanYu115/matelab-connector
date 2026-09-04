@@ -685,7 +685,7 @@ def create_app(
 
     @app.get("/healthz", tags=["operations"])
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "service": "matelab-desktop-bridge"}
 
     @app.post(
         "/v1/captures",
