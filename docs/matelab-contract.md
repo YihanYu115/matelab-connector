@@ -13,7 +13,7 @@ Source checked on 2026-09-04: [MatElab ELN help](https://matelab.iphy.ac.cn/eln/
 | Items | `POST /eln_api/items` | Used before import to reconcile an uncertain prior create. |
 | Export | `POST /eln_api/export` | Exact UID request; complete response saved as canonical JSON and hashed. |
 | Search | `POST /eln_api/search` | Exposed by the narrow client for contract verification. |
-| Update | `POST /eln_api/update` | Exposed by the client, but not used by automatic submission. |
+| Update | `POST /eln_api/update` | Used only by GUI manual records after `/create`; idempotent `addModule` names avoid duplicate modules during retry. |
 | ELNs | `POST /eln_api/elns` | Used by `doctor --online`. |
 
 MatElab response `code` values are classified as: `0` success, `refresh` refresh-and-retry once, `1` authentication/authorization attention, `2` and `4` contract/input attention, and `3` retryable server failure. HTTP 429/5xx and network timeouts are retryable.
@@ -38,4 +38,3 @@ Do not mark the production connector accepted until every line has a recorded fi
 - [ ] Attachment preview/download permission and URL lifetime.
 
 Until historical version export is proven, receipts deliberately set `mutable_source=true`.
-

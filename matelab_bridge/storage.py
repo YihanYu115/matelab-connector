@@ -561,6 +561,25 @@ class BridgeStore:
                 )
             return self._receipt_in_connection(connection, capture_id)
 
+    def retry_auth_required(self) -> int:
+        """Resume all durable jobs that were paused solely for MatElab login."""
+        resumed = 0
+        with self.connect() as connection, connection:
+            rows = connection.execute(
+                "SELECT capture_id FROM captures WHERE state=? ORDER BY created_at",
+                (SyncState.AUTH_REQUIRED.value,),
+            ).fetchall()
+            for row in rows:
+                self._transition_in_connection(
+                    connection,
+                    row["capture_id"],
+                    SyncState.READY,
+                    "authentication_restored",
+                    updates={"next_attempt_at": None, "last_error_json": None},
+                )
+                resumed += 1
+        return resumed
+
     def recover_inflight(self) -> int:
         recovered = 0
         with self.connect() as connection, connection:

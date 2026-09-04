@@ -31,6 +31,132 @@
         "title": "ArtifactReceipt",
         "type": "object"
       },
+      "Body_api_manual_submission_v1_manual_submissions_post": {
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "contentMediaType": "application/octet-stream",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments"
+          },
+          "content": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "notebook_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Id",
+            "type": "string"
+          },
+          "notebook_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Name",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "content",
+          "notebook_id",
+          "notebook_name"
+        ],
+        "title": "Body_api_manual_submission_v1_manual_submissions_post",
+        "type": "object"
+      },
+      "Body_ui_manual_submission_v1_ui_manual_submissions_post": {
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "contentMediaType": "application/octet-stream",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments"
+          },
+          "content": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "notebook_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Id",
+            "type": "string"
+          },
+          "notebook_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Notebook Name",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "content",
+          "notebook_id",
+          "notebook_name"
+        ],
+        "title": "Body_ui_manual_submission_v1_ui_manual_submissions_post",
+        "type": "object"
+      },
       "CaptureAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -310,6 +436,31 @@
         ],
         "title": "SyncState",
         "type": "string"
+      },
+      "UiLoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "format": "password",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          },
+          "username": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "UiLoginRequest",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -1060,6 +1211,401 @@
         "summary": "Retry Capture",
         "tags": [
           "operations"
+        ]
+      }
+    },
+    "/v1/manual-submissions": {
+      "post": {
+        "description": "Simple multipart endpoint for local programs that submit human-readable notes.",
+        "operationId": "api_manual_submission_v1_manual_submissions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_api_manual_submission_v1_manual_submissions_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Manual Submission V1 Manual Submissions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api Manual Submission",
+        "tags": [
+          "captures"
+        ]
+      }
+    },
+    "/v1/ui/captures/{capture_id}": {
+      "get": {
+        "operationId": "ui_capture_status_v1_ui_captures__capture_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Capture Status",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/login": {
+      "post": {
+        "operationId": "ui_login_v1_ui_login_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UiLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ui Login V1 Ui Login Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Login",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/logout": {
+      "post": {
+        "operationId": "ui_logout_v1_ui_logout_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ui Logout V1 Ui Logout Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Logout",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/manual-submissions": {
+      "post": {
+        "operationId": "ui_manual_submission_v1_ui_manual_submissions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ui_manual_submission_v1_ui_manual_submissions_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ui Manual Submission V1 Ui Manual Submissions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Manual Submission",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/notebooks": {
+      "get": {
+        "operationId": "ui_notebooks_v1_ui_notebooks_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ui Notebooks V1 Ui Notebooks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Notebooks",
+        "tags": [
+          "desktop-gui"
+        ]
+      }
+    },
+    "/v1/ui/session": {
+      "get": {
+        "operationId": "ui_session_v1_ui_session_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-bridge-ui-csrf",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Ui-Csrf"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ui Session V1 Ui Session Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ui Session",
+        "tags": [
+          "desktop-gui"
         ]
       }
     }

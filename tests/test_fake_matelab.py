@@ -86,6 +86,29 @@ def test_fake_matelab_contract_roundtrip() -> None:
         assert elns["items"][0]["showtext"] == "book"
         assert client.post("/eln_api/update", json={}, headers=headers).json()["code"] == 0
 
+        created = client.post(
+            "/eln_api/create",
+            json={"eln": "book", "uid": "manual-1", "title": "manual", "path": []},
+            headers=headers,
+        )
+        assert created.json()["code"] == 0
+        updated = client.post(
+            "/eln_api/update",
+            json={
+                "eln": "book",
+                "uid": "manual-1",
+                "addModule": [{"name": "记录内容", "type": "richtext", "data": "正文"}],
+            },
+            headers=headers,
+        )
+        assert updated.json()["code"] == 0
+        manual_export = client.post(
+            "/eln_api/export",
+            json={"uids": [{"eln": "book", "uid": "manual-1"}]},
+            headers=headers,
+        ).json()
+        assert manual_export["dataset"][0]["data"]["记录内容"] == "正文"
+
 
 def test_fake_rejects_bad_upload_hash_and_import_shape() -> None:
     headers = {"Authorization": "Bearer dev-access"}

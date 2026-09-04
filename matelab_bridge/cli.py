@@ -8,8 +8,10 @@ import json
 import mimetypes
 import os
 import socket
+import threading
 import time
 import uuid
+import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -187,6 +189,33 @@ def note(
 @app.command("serve")
 def serve(verbose: bool = False) -> None:
     run_service(BridgeConfig.from_env(), verbose=verbose)
+
+
+@app.command("gui")
+def gui(
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open-browser/--no-browser", help="启动后自动打开中文 GUI。"),
+    ] = True,
+    verbose: bool = False,
+) -> None:
+    """启动本地 API, 并打开中文桌面操作界面。"""
+    config = BridgeConfig.from_env()
+    if open_browser:
+        url = f"http://127.0.0.1:{config.port}/ui"
+
+        def open_when_ready() -> None:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", config.port), timeout=0.4):
+                        webbrowser.open(url)
+                        return
+                except OSError:
+                    time.sleep(0.2)
+
+        threading.Thread(target=open_when_ready, daemon=True).start()
+    run_service(config, verbose=verbose)
 
 
 @app.command("worker")

@@ -15,6 +15,7 @@ def create_fake_matelab_app() -> FastAPI:
     uploads: dict[str, bytearray] = defaultdict(bytearray)
     uploaded_files: dict[str, dict[str, Any]] = {}
     records: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    notebooks = ["工作进展", "自动实验记录", "分析与推导"]
     next_record_id = 1000
     app.state.uploads = uploaded_files
     app.state.records = records
@@ -117,6 +118,39 @@ def create_fake_matelab_app() -> FastAPI:
             ids.append(next_record_id)
         return {"code": 0, "eln_id": 1264, "id": ids, "msg": "数据导入成功"}
 
+    @app.post("/eln_api/create")
+    def create_record(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        nonlocal next_record_id
+        if not authorized(authorization):
+            return {"code": 1, "msg": "unauthorized"}
+        notebook = payload.get("eln")
+        uid = payload.get("uid")
+        title = payload.get("title", "")
+        if not isinstance(notebook, str) or not notebook or not isinstance(uid, str) or not uid:
+            return {"code": 2, "msg": "invalid create payload"}
+        if any(record["sn"] == uid for record in records[notebook]):
+            return {"code": 2, "msg": "UID already exists"}
+        next_record_id += 1
+        records[notebook].append(
+            {
+                "id": next_record_id,
+                "sn": uid,
+                "title": title,
+                "comm": title,
+                "keywords": [],
+                "template_id": None,
+                "data": {},
+                "locked": False,
+                "signed": False,
+                "version": 1,
+                "datetime_create": "2026-09-04 12:00",
+                "datetime_modify": "2026-09-04 12:00",
+            }
+        )
+        return {"code": 0, "msg": "数据创建成功"}
+
     @app.post("/eln_api/items")
     def items(
         payload: dict[str, Any], authorization: str | None = Header(default=None)
@@ -189,16 +223,30 @@ def create_fake_matelab_app() -> FastAPI:
             "code": 0,
             "items": [
                 {"showtext": name, "sn": f"fake-{index}", "owner": True, "server": "localhost"}
-                for index, name in enumerate(records, start=1)
+                for index, name in enumerate(dict.fromkeys([*records, *notebooks]), start=1)
             ],
         }
 
     @app.post("/eln_api/update")
     def update(
-        _payload: dict[str, Any], authorization: str | None = Header(default=None)
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
     ) -> dict[str, Any]:
         if not authorized(authorization):
             return {"code": 1, "msg": "unauthorized"}
+        notebook = payload.get("eln")
+        uid = payload.get("uid")
+        if notebook and uid:
+            record = next(
+                (item for item in records[str(notebook)] if item["sn"] == uid),
+                None,
+            )
+            if record is None:
+                return {"code": 2, "msg": "record not found"}
+            for module in payload.get("addModule", []):
+                name = module.get("name")
+                if isinstance(name, str) and name not in record["data"]:
+                    record["data"][name] = module.get("data", "")
+            record["datetime_modify"] = "2026-09-04 12:01"
         return {"code": 0, "msg": "数据更新成功"}
 
     return app

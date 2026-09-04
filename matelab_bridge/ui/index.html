@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="bridge-csrf" content="__BRIDGE_CSRF__">
+  <meta name="matelab-url" content="__MATELAB_URL__">
+  <title>MatElab Desktop Connector</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/ui" aria-label="MatElab Desktop Connector 首页">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span>
+          <strong>MatElab Connector</strong>
+          <small>本地实验记录助手</small>
+        </span>
+      </a>
+      <div id="session-pill" class="status-pill status-offline">
+        <span class="status-dot"></span>
+        <span id="session-label">正在检查连接…</span>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">DESKTOP BRIDGE</p>
+        <h1>把实验现场，可靠地写进记录本。</h1>
+        <p class="hero-copy">登录一次，选择记录本，写下内容并添加附件。连接器会在后台上传、创建记录并回读核验。</p>
+      </div>
+      <div class="service-chip">
+        <span>本地服务</span>
+        <strong id="service-address">127.0.0.1:8765</strong>
+        <i>运行中</i>
+      </div>
+    </section>
+
+    <section id="error-panel" class="error-panel hidden" role="alert" aria-live="assertive">
+      <div class="error-icon">!</div>
+      <div>
+        <strong id="error-title">操作失败</strong>
+        <p id="error-message"></p>
+        <p id="error-action" class="error-action"></p>
+        <details>
+          <summary>查看技术详情</summary>
+          <pre id="error-details"></pre>
+        </details>
+      </div>
+      <button id="dismiss-error" class="icon-button" type="button" aria-label="关闭错误">×</button>
+    </section>
+
+    <div class="workspace-grid">
+      <section class="card account-card">
+        <div class="card-heading">
+          <span class="step-number">01</span>
+          <div>
+            <h2>登录 MatElab</h2>
+            <p>密码仅用于本次登录，不会保存在连接器中。</p>
+          </div>
+        </div>
+        <form id="login-form" autocomplete="on">
+          <label>
+            <span>账号</span>
+            <input id="username" name="username" type="text" autocomplete="username" placeholder="邮箱或用户名" required>
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="MatElab 登录密码" required>
+          </label>
+          <button id="login-button" class="primary-button" type="submit">
+            <span>登录并加载记录本</span>
+            <span class="button-arrow" aria-hidden="true">→</span>
+          </button>
+        </form>
+        <div id="logged-in-panel" class="logged-in-panel hidden">
+          <div class="success-seal" aria-hidden="true">✓</div>
+          <div>
+            <strong>MatElab 已连接</strong>
+            <p>登录凭证由操作系统安全存储；过期前会自动刷新。</p>
+          </div>
+          <button id="logout-button" class="text-button" type="button">退出登录</button>
+        </div>
+        <p class="server-note">服务器：<span id="matelab-server"></span></p>
+      </section>
+
+      <section class="card compose-card">
+        <div class="card-heading">
+          <span class="step-number">02</span>
+          <div>
+            <h2>新建手动记录</h2>
+            <p>内容先保存在本机，再由后台可靠同步。</p>
+          </div>
+        </div>
+        <form id="record-form">
+          <div class="notebook-row">
+            <label class="grow">
+              <span>目标记录本</span>
+              <select id="notebook" name="notebook" disabled required>
+                <option value="">请先登录 MatElab</option>
+              </select>
+            </label>
+            <button id="refresh-notebooks" class="square-button" type="button" title="刷新记录本" disabled aria-label="刷新记录本">↻</button>
+          </div>
+          <label>
+            <span>标题</span>
+            <input id="record-title" name="title" type="text" maxlength="255" placeholder="例如：低温系统降温前检查" required>
+          </label>
+          <label>
+            <span>记录内容</span>
+            <textarea id="record-content" name="content" maxlength="100000" rows="7" placeholder="记录操作、观察到的现象和下一步计划…" required></textarea>
+          </label>
+          <label>
+            <span>记录人 <small>（可选）</small></span>
+            <input id="actor-id" name="actor_id" type="text" maxlength="255" placeholder="默认使用当前 Windows 用户">
+          </label>
+          <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="选择附件">
+            <input id="attachments" name="attachments" type="file" multiple hidden>
+            <span class="upload-symbol" aria-hidden="true">＋</span>
+            <strong>拖放附件到这里</strong>
+            <p>或点击选择文件；提交前会在本机计算 SHA-256</p>
+          </div>
+          <ul id="file-list" class="file-list" aria-live="polite"></ul>
+          <button id="submit-button" class="primary-button submit-button" type="submit" disabled>
+            <span>上传到所选记录本</span>
+            <span class="button-arrow" aria-hidden="true">↑</span>
+          </button>
+        </form>
+      </section>
+    </div>
+
+    <section id="progress-card" class="card progress-card hidden" aria-live="polite">
+      <div class="progress-heading">
+        <div>
+          <p class="eyebrow">SYNC STATUS</p>
+          <h2 id="progress-title">正在提交记录</h2>
+        </div>
+        <code id="capture-id"></code>
+      </div>
+      <ol class="progress-steps">
+        <li data-step="0"><span>1</span><strong>本机已接收</strong><small>内容和附件已安全落盘</small></li>
+        <li data-step="1"><span>2</span><strong>上传附件</strong><small>串行校验并传至 MatElab</small></li>
+        <li data-step="2"><span>3</span><strong>创建记录</strong><small>写入所选目标记录本</small></li>
+        <li data-step="3"><span>4</span><strong>回读核验</strong><small>确认编号与内容哈希</small></li>
+        <li data-step="4"><span>5</span><strong>完成</strong><small>本机保留可追踪回执</small></li>
+      </ol>
+      <div class="progress-footer">
+        <p id="progress-message">任务已进入后台队列。</p>
+        <button id="record-link" class="text-button hidden" type="button">复制回执编号</button>
+      </div>
+    </section>
+
+    <section class="card api-card">
+      <div>
+        <p class="eyebrow">LOCAL API</p>
+        <h2>其他程序也可以调用</h2>
+        <p>连接器在同一端口提供 HTTP API。可提交实验、分析、推导和附件，并查询可靠同步回执。</p>
+      </div>
+      <div class="api-actions">
+        <code id="api-address"></code>
+        <button id="copy-api" class="secondary-button" type="button">复制地址</button>
+        <a class="secondary-button" href="/docs" target="_blank" rel="noreferrer">打开 API 文档</a>
+      </div>
+    </section>
+
+    <footer>
+      <span>MatElab Desktop Connector</span>
+      <span>默认仅监听本机 · 附件哈希校验 · 断网自动重试</span>
+    </footer>
+  </main>
+  <script src="/ui/app.js" defer></script>
+</body>
+</html>

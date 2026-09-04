@@ -40,6 +40,9 @@ include = [
   "matelab_bridge/**/*.py",
   "matelab_bridge/schemas/*.json",
   "matelab_bridge/template_snapshots/*.json",
+  "matelab_bridge/ui/*.html",
+  "matelab_bridge/ui/*.css",
+  "matelab_bridge/ui/*.js",
 ]
 
 [tool.ruff]

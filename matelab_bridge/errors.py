@@ -46,6 +46,10 @@ class InvalidStateError(BridgeError):
     code = "invalid_state"
 
 
+class NotebookNotFoundError(BridgeError):
+    code = "notebook_not_found"
+
+
 class MappingConflictError(BridgeError):
     code = "mapping_conflict"
 

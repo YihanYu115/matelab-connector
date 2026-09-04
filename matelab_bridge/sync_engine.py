@@ -23,7 +23,12 @@ from .matelab_client import MatelabClient
 from .models import MatelabRecordRef, SyncState
 from .security import redact_text, safe_child
 from .storage import BridgeStore
-from .templates import build_import_payload, select_template
+from .templates import (
+    build_import_payload,
+    build_manual_create_payload,
+    build_manual_update_payload,
+    select_template,
+)
 
 LOGGER = logging.getLogger("matelab_bridge.sync")
 
@@ -90,6 +95,16 @@ class SyncEngine:
         capture_row = self.store.get_capture_row(capture_id)
         envelope = self.store.get_manifest(capture_id)
         selection = select_template(self.config, envelope.capture_kind)
+        is_manual = envelope.routing_hints.get("creation_mode") == "create_update"
+        notebook = (
+            str(envelope.routing_hints.get("target_notebook", "")).strip()
+            if is_manual
+            else selection.notebook
+        )
+        target_user_value = envelope.routing_hints.get("target_user") if is_manual else None
+        target_user = str(target_user_value).strip() if target_user_value else None
+        if not notebook:
+            raise MatelabContractError("manual submission has no target notebook")
         artifact_rows = self.store.list_artifacts(capture_id)
 
         for row in artifact_rows:
@@ -112,9 +127,10 @@ class SyncEngine:
                 Path(row["local_path"]),
                 uid=upload_name,
                 name=upload_name,
-                notebook=selection.notebook,
+                notebook=notebook,
                 mime_type=descriptor["mime_type"],
                 expected_sha256=row["expected_sha256"],
+                filename=descriptor["filename"],
             )
             receipt.setdefault("name", upload_name)
             receipt.setdefault("filename", descriptor["filename"])
@@ -129,12 +145,34 @@ class SyncEngine:
             details={"record_uid": capture_row["record_uid"]},
         )
         artifact_rows = self.store.list_artifacts(capture_id)
-        existing = self._find_record(selection.notebook, capture_row["record_uid"])
+        existing = self._find_record(notebook, capture_row["record_uid"], user=target_user)
         import_receipt: dict[str, Any] = {}
-        if existing is None:
+        if is_manual:
+            if existing is None:
+                create_payload = build_manual_create_payload(
+                    envelope,
+                    capture_row,
+                    notebook=notebook,
+                    user=target_user,
+                )
+                self.matelab.create_record(create_payload)
+                existing = self._find_record(notebook, capture_row["record_uid"], user=target_user)
+                if existing is None:
+                    raise MatelabContractError(
+                        "MatElab accepted record creation but the record was not found afterwards"
+                    )
+            update_payload = build_manual_update_payload(
+                envelope,
+                capture_row,
+                artifact_rows,
+                notebook=notebook,
+                user=target_user,
+            )
+            self.matelab.update_record(update_payload)
+        elif existing is None:
             payload = build_import_payload(self.config, envelope, capture_row, artifact_rows)
             import_receipt = self.matelab.import_record(payload)
-            existing = self._find_record(selection.notebook, capture_row["record_uid"])
+            existing = self._find_record(notebook, capture_row["record_uid"])
             if existing is None:
                 ids = import_receipt.get("id")
                 record_id = ids[0] if isinstance(ids, list) and ids else "unknown"
@@ -153,9 +191,9 @@ class SyncEngine:
         )
         self.store.transition(capture_id, SyncState.VERIFYING_EXPORT, "record_export_intent")
         exported = self.matelab.export_record(
-            selection.notebook,
+            notebook,
             capture_row["record_uid"],
-            user=self.config.owner_id,
+            user=target_user if is_manual else self.config.owner_id,
         )
         export_bytes = canonical_json(exported)
         if not self._contains_value(exported, capture_id) or not self._contains_value(
@@ -167,8 +205,11 @@ class SyncEngine:
         export_sha256 = sha256_tag(export_bytes)
         version = int(existing.get("version") or 1)
         export_path = self._write_export(capture_id, version, export_bytes)
-        notebook_id_value = import_receipt.get("eln_id") or self._configured_notebook_id(
-            envelope.capture_kind.value
+        notebook_id_value = (
+            envelope.routing_hints.get("target_notebook_id")
+            if is_manual
+            else import_receipt.get("eln_id")
+            or self._configured_notebook_id(envelope.capture_kind.value)
         )
         if notebook_id_value is None:
             raise MatelabContractError(
@@ -178,9 +219,9 @@ class SyncEngine:
         attachment_hashes = [f"sha256:{row['expected_sha256']}" for row in artifact_rows]
         record_ref = MatelabRecordRef(
             server_id=self.config.server_id,
-            owner_id=self.config.owner_id,
+            owner_id=target_user or self.config.owner_id,
             notebook_id=notebook_id,
-            notebook_name_snapshot=selection.notebook,
+            notebook_name_snapshot=notebook,
             record_id=str(existing.get("id", "unknown")),
             record_uid=str(existing.get("sn") or capture_row["record_uid"]),
             record_version=version,
@@ -201,8 +242,11 @@ class SyncEngine:
         )
         self.store.transition(capture_id, SyncState.COMPLETE, "sync_complete")
 
-    def _find_record(self, notebook: str, record_uid: str) -> dict[str, Any] | None:
-        matches = [item for item in self.matelab.items(notebook) if item.get("sn") == record_uid]
+    def _find_record(
+        self, notebook: str, record_uid: str, *, user: str | None = None
+    ) -> dict[str, Any] | None:
+        items = self.matelab.items(notebook, user=user) if user else self.matelab.items(notebook)
+        matches = [item for item in items if item.get("sn") == record_uid]
         if len(matches) > 1:
             raise MatelabConflictError("MatElab returned duplicate records for deterministic UID")
         return matches[0] if matches else None

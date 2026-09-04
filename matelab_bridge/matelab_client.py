@@ -112,6 +112,9 @@ class MatelabClient:
     def import_record(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._api_post("/eln_api/import", json_data=payload)
 
+    def create_record(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._api_post("/eln_api/create", json_data=payload)
+
     def export_record(
         self, notebook: str, record_uid: str, *, user: str | None = None
     ) -> dict[str, Any]:
@@ -134,6 +137,7 @@ class MatelabClient:
         notebook: str,
         mime_type: str,
         expected_sha256: str,
+        filename: str | None = None,
     ) -> dict[str, Any]:
         """Upload chunks serially; MatElab explicitly forbids parallel chunks."""
         if self.config.upload_chunk_bytes > 20 * 1024**2:
@@ -145,7 +149,7 @@ class MatelabClient:
             if chunk == b"":
                 final_result = self._upload_chunk(
                     chunk,
-                    filename=path.name,
+                    filename=filename or path.name,
                     mime_type=mime_type,
                     uid=uid,
                     name=name,
@@ -158,7 +162,7 @@ class MatelabClient:
                 following = handle.read(self.config.upload_chunk_bytes)
                 final_result = self._upload_chunk(
                     chunk,
-                    filename=path.name,
+                    filename=filename or path.name,
                     mime_type=mime_type,
                     uid=uid,
                     name=name,

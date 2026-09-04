@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any, cast
+from urllib.parse import quote
 
 from .canonical import canonical_json, sha256_tag
 from .config import BridgeConfig
@@ -139,9 +140,101 @@ def build_import_payload(
     }
 
 
+def build_manual_create_payload(
+    envelope: CaptureEnvelope,
+    capture_row: Any,
+    *,
+    notebook: str,
+    user: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "eln": notebook,
+        "path": [],
+        "title": _record_title(envelope),
+        "uid": capture_row["record_uid"],
+        "describe": "由 MatElab Desktop Connector 手动提交",
+    }
+    if user and user != "self":
+        payload["user"] = user
+    return payload
+
+
+def build_manual_update_payload(
+    envelope: CaptureEnvelope,
+    capture_row: Any,
+    artifact_rows: list[Any],
+    *,
+    notebook: str,
+    user: str | None,
+) -> dict[str, Any]:
+    note = cast(dict[str, Any], envelope.extensions["quick_note"])
+    title = str(note.get("title") or _record_title(envelope))
+    body = str(note["original_text"])
+    metadata = {
+        "Connector Schema": envelope.schema_,
+        "Capture ID": envelope.capture_id,
+        "Capture Hash": capture_row["manifest_sha256"],
+        "Capture Kind": envelope.capture_kind.value,
+        "Occurred At": envelope.occurred_at.isoformat(),
+        "Received At": capture_row["received_at"],
+        "Producer ID": envelope.producer.producer_id,
+        "Actor ID": envelope.producer.actor_id,
+        "Target Notebook": notebook,
+    }
+    artifact_lines: list[str] = []
+    for row in artifact_rows:
+        descriptor = json.loads(row["descriptor_json"])
+        receipt = json.loads(row["matelab_receipt_json"]) if row["matelab_receipt_json"] else {}
+        remote_hash = str(receipt.get("hash") or descriptor["sha256"])
+        remote_size = int(receipt.get("size") or descriptor["size"])
+        filename = str(receipt.get("filename") or descriptor["filename"])
+        href = (
+            f"elnurl://h={quote(remote_hash, safe='')}&s={remote_size}&f={quote(filename, safe='')}"
+        )
+        artifact_lines.append(
+            f'<li><a href="{html.escape(href, quote=True)}">{html.escape(filename)}</a>'
+            f"(SHA-256: {html.escape(descriptor['sha256'])})</li>"
+        )
+    artifacts_html = (
+        "<ul>" + "".join(artifact_lines) + "</ul>"
+        if artifact_lines
+        else "<p>本条记录没有附件。</p>"
+    )
+    modules = [
+        {
+            "name": "记录内容",
+            "type": "richtext",
+            "data": f"<h2>{html.escape(title)}</h2><pre>{html.escape(body)}</pre>",
+        },
+        {
+            "name": "附件",
+            "type": "richtext",
+            "data": artifacts_html,
+        },
+        {
+            "name": "Connector 元数据",
+            "type": "richtext",
+            "data": "<pre>"
+            + html.escape(json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2))
+            + "</pre>",
+        },
+    ]
+    payload: dict[str, Any] = {
+        "eln": notebook,
+        "uid": capture_row["record_uid"],
+        "addModule": modules,
+    }
+    if user and user != "self":
+        payload["user"] = user
+    return payload
+
+
 def _record_title(envelope: CaptureEnvelope) -> str:
     note = envelope.extensions.get("quick_note")
     if envelope.capture_kind == CaptureKind.FIELD_NOTE and isinstance(note, dict):
+        title = str(note.get("title", "")).strip()
+        if title:
+            return title[:255]
         text = str(note.get("original_text", "")).strip().replace("\n", " ")
         return text[:80] or envelope.capture_id
     scope = envelope.scope
