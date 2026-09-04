@@ -13,10 +13,11 @@ Checked against the public MatElab help on 2026-09-04. “Documented” is not e
 | Search | ≤24 requested fields | Passed for fixed metadata path | Pending | Fixed machine fields; independent-client acceptance test included. |
 | UID export | Main server documented; group server unsupported | Passed for fake | Pending | Production server choice is Gate 0; otherwise `needs_attention`. |
 | Historical version export | Not documented clearly | Version mappings tested locally | Pending | `mutable_source=true`; append observed versions, preserve old export snapshots. |
-| Collaborative update durability | Warning documented | Not modeled | Pending | Automatic submission does not call update. |
+| Collaborative update durability | Warning documented | Acknowledgement modeled; active-editor save not emulated | Pending | Capture submission does not call update; description receipts explicitly stop at MatElab acknowledgement. |
+| Append record description | `update.addModule` rich text documented; collaborative-save caveat | Passed with stable module name and idempotency ledger | Pending | Synchronous MatElab acknowledgement; caller retries with the same key. |
+| Downstream change notification | No MatElab callback contract used | Durable cursor replay and SSE passed locally | Pending | Publish verified record sync and acknowledged description events; no outbound webhook. |
 | Lock/signature | Endpoint documented; private password required | Not used | Pending | Never automatic; connector never stores signature password. |
 | Read-only account access | Not specified | Not modeled | Pending | Required Gate 0 permission test. |
 | Service/restricted token | Not documented | Not modeled | Pending | Prefer least-privilege integration account if MatElab supports one. |
 
 Go/No-Go remains **No-Go for production** until the Pilot server column is complete. Offline implementation and local integration testing may proceed.
-

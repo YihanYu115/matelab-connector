@@ -62,6 +62,18 @@ class NotebookSelectionIncompleteError(BridgeError):
     code = "notebook_selection_incomplete"
 
 
+class RecordNotFoundError(BridgeError):
+    code = "record_not_found"
+
+
+class RecordNotWritableError(BridgeError):
+    code = "record_not_writable"
+
+
+class IdempotencyConflictError(BridgeError):
+    code = "idempotency_conflict"
+
+
 class MappingConflictError(BridgeError):
     code = "mapping_conflict"
 

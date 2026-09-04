@@ -229,6 +229,34 @@ def build_manual_update_payload(
     return payload
 
 
+def build_description_update_payload(
+    *,
+    record_uid: str,
+    notebook: str,
+    user: str | None,
+    module_name: str,
+    title: str | None,
+    content: str,
+) -> dict[str, Any]:
+    """Build a plain-text description as one idempotently named rich-text module."""
+    title_html = f"<h3>{html.escape(title.strip())}</h3>" if title and title.strip() else ""
+    body_html = f"<pre>{html.escape(content)}</pre>"
+    payload: dict[str, Any] = {
+        "eln": notebook,
+        "uid": record_uid,
+        "addModule": [
+            {
+                "name": module_name,
+                "type": "richtext",
+                "data": title_html + body_html,
+            }
+        ],
+    }
+    if user and user != "self":
+        payload["user"] = user
+    return payload
+
+
 def _record_title(envelope: CaptureEnvelope) -> str:
     note = envelope.extensions.get("quick_note")
     if envelope.capture_kind == CaptureKind.FIELD_NOTE and isinstance(note, dict):

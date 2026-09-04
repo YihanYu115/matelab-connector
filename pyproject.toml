@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matelab-desktop-bridge"
-version = "0.3.0"
+version = "0.4.0"
 description = "Durable local submission gateway for MatElab electronic lab notebooks"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ dependencies = [
   "pydantic>=2.9,<3",
   "python-dotenv>=1.0,<2",
   "python-multipart>=0.0.12,<1",
+  "tkinterdnd2>=0.6.2,<1",
   "typer>=0.12,<1",
   "uvicorn[standard]>=0.30,<1",
 ]

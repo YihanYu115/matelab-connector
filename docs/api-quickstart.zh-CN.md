@@ -119,6 +119,93 @@ HTTP `202` 只表示 Connector 已把请求可靠接收到本地队列，并不�
 
 当请求使用默认记录本时，Connector 会在第一次接收时固定实际目标。即使用户随后修改默认记录本，使用原 Key 重试仍会返回原任务，不会改投新记录本。
 
+## 给已有记录追加描述
+
+调用 `POST /v1/records/{record_uid}/descriptions`。`record_uid` 可从同步完成回执的
+`matelab_ref.record_uid` 取得。请求体是 JSON：
+
+```json
+{
+  "title": "复测说明",
+  "content": "更换衰减器后复测，峰位不变。",
+  "notebook_id": "记录本稳定 ID",
+  "notebook_name": "自动实验记录"
+}
+```
+
+`content` 必填，长度为 1–100000 个字符；`title` 可选。`notebook_id` 与
+`notebook_name` 必须同时提供；两者都省略时使用 API 默认记录本。每次逻辑追加都应发送一个新的 `Idempotency-Key`，网络超时重试时复用原值：
+
+```python
+from uuid import uuid4
+
+import httpx
+
+response = httpx.post(
+    "http://127.0.0.1:8765/v1/records/RECORD_UID/descriptions",
+    headers={"Idempotency-Key": str(uuid4())},
+    json={
+        "title": "复测说明",
+        "content": "更换衰减器后复测，峰位不变。",
+    },
+    timeout=60,
+)
+response.raise_for_status()
+print(response.json())
+```
+
+Connector 会把描述写成一个名称稳定的 MatElab `richtext` 模块。同一幂等键和相同内容返回原回执；同一键换内容返回 `409 idempotency_conflict`。成功状态
+`matelab_acknowledged` 表示 MatElab 更新接口已确认请求。根据 MatElab 官方文档，如果另一位用户正在协同编辑同一记录，内容会进入当前编辑版本，需要编辑者手动保存；因此该状态不承诺协同编辑者尚未保存的内容已经落入最终版本。
+
+## 监听记录更新
+
+事件是先写入 SQLite、再返回给监听方的持久事件。当前事件类型：
+
+| 类型 | 触发时机 |
+| --- | --- |
+| `matelab.record.synced` | 新记录已上传、导出回读通过并保存本地映射 |
+| `matelab.record.description_added` | 补充描述已被 MatElab 更新接口接受 |
+
+先用普通 JSON 接口补读：
+
+```text
+GET /v1/events?after=0&limit=100
+GET /v1/events?after=42&type=matelab.record.synced
+```
+
+响应中的 `next_cursor` 是下一次请求的 `after`：
+
+```json
+{
+  "events": [
+    {
+      "cursor": 42,
+      "id": "evt-...",
+      "type": "matelab.record.synced",
+      "occurred_at": "2026-09-04T13:00:00+00:00",
+      "subject": "capture:capture-...",
+      "data": {
+        "capture_id": "capture-...",
+        "sync_id": "sync-...",
+        "capture_kind": "experiment_run",
+        "manifest_sha256": "sha256:...",
+        "matelab_ref": {}
+      }
+    }
+  ],
+  "next_cursor": 42
+}
+```
+
+实时监听使用 Server-Sent Events：
+
+```powershell
+curl.exe -N "http://127.0.0.1:8765/v1/events/stream?after=42"
+```
+
+SSE 帧的 `id` 是数字游标。监听方应只在自己的业务处理成功后保存该游标；断线时用
+`after=<已保存游标>` 重连，也可发送标准 `Last-Event-ID` 请求头。流会先重放遗漏事件，再等待新事件，并定期发送注释心跳。`type` 查询参数可以重复出现以监听多种事件。Token 模式下，这两个读取接口都要求状态作用域的 `X-Bridge-Token`。
+
 ## 常见错误
 
 所有 API 错误都使用统一结构：

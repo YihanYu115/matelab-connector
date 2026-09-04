@@ -8,6 +8,7 @@ import uuid
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -142,6 +143,33 @@ class NativeConnectorClient:
             self.http.post(
                 f"/v1/captures/{capture_id}/retry",
                 headers=self._headers("maintenance"),
+            )
+        )
+        return dict(value)
+
+    def add_record_description(
+        self,
+        *,
+        notebook: dict[str, Any],
+        record_uid: str,
+        title: str | None,
+        content: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        headers = self._headers("submit")
+        headers["Idempotency-Key"] = idempotency_key or f"native-description-{uuid.uuid4()}"
+        payload: dict[str, str] = {
+            "notebook_id": str(notebook["id"]),
+            "notebook_name": str(notebook["name"]),
+            "content": content,
+        }
+        if title:
+            payload["title"] = title
+        value = self._result(
+            self.http.post(
+                f"/v1/records/{quote(record_uid, safe='')}/descriptions",
+                headers=headers,
+                json=payload,
             )
         )
         return dict(value)

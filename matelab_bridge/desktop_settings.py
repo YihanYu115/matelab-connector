@@ -14,6 +14,7 @@ class DesktopSettings:
     api_port: int
     default_notebook_id: str | None = None
     default_notebook_name: str | None = None
+    matelab_username: str | None = None
 
     @classmethod
     def load(cls, data_dir: Path, *, default_port: int) -> DesktopSettings:
@@ -25,10 +26,12 @@ class DesktopSettings:
             port = int(value["api_port"])
             notebook_id = cls._optional_text(value.get("default_notebook_id"))
             notebook_name = cls._optional_text(value.get("default_notebook_name"))
+            matelab_username = cls._optional_text(value.get("matelab_username"))
         except (OSError, ValueError, TypeError, KeyError):
             port = default_port
             notebook_id = None
             notebook_name = None
+            matelab_username = None
         if not 0 < port < 65536:
             port = default_port
         if not notebook_id or not notebook_name:
@@ -38,6 +41,7 @@ class DesktopSettings:
             api_port=port,
             default_notebook_id=notebook_id,
             default_notebook_name=notebook_name,
+            matelab_username=matelab_username,
         )
 
     @staticmethod
@@ -59,6 +63,7 @@ class DesktopSettings:
                     "api_port": self.api_port,
                     "default_notebook_id": self.default_notebook_id,
                     "default_notebook_name": self.default_notebook_name,
+                    "matelab_username": self.matelab_username,
                 },
                 ensure_ascii=False,
                 indent=2,

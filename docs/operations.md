@@ -12,6 +12,10 @@ For ordinary desktop use, launch `MatElabConnector.exe` on Windows or `MatElab C
 
 For local API callers, select a writable notebook on the native console's manual submission page and click `设为 API 默认记录本`. The selection is stored in `desktop-settings.json`. `POST /v1/manual-submissions` may then omit both `notebook_id` and `notebook_name`; explicit ID/name pairs remain supported as per-request overrides. See [中文 API 快速接入](api-quickstart.zh-CN.md).
 
+Existing records can receive additional descriptions through `POST /v1/records/{record_uid}/descriptions`. The caller should take the UID from a completed sync receipt and reuse the same `Idempotency-Key` and JSON body after an uncertain response. This update is synchronous and is not part of the Capture retry worker.
+
+Local integrations can resume from `GET /v1/events?after=<cursor>` and then stay connected to `GET /v1/events/stream?after=<cursor>`. Both endpoints use the status credential in token mode. Consumers own their committed cursor and should process each event idempotently. The database backup includes the full integration-event log and description idempotency ledger.
+
 For structured submissions from Data Vault or analysis programs:
 
 1. Create the three MatElab templates from `matelab_bridge/template_snapshots/` and configure their exact names, stable notebook IDs, notebooks, and numeric owner ID.

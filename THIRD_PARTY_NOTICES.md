@@ -2,7 +2,7 @@
 
 MatElab Connector is distributed under the MIT License. Its packaged applications include
 third-party components governed by their own licenses. The following inventory reflects the
-Python dependency set used for the Windows `v0.3.0` build; later builds may contain newer
+Python dependency set used for the Windows `v0.4.0` build; later builds may contain newer
 compatible versions permitted by `pyproject.toml`.
 
 | Component | Version | License | Project |
@@ -34,6 +34,7 @@ compatible versions permitted by `pyproject.toml`.
 | rich | 15.0.0 | MIT | <https://github.com/Textualize/rich> |
 | shellingham | 1.5.4 | ISC | <https://github.com/sarugaku/shellingham> |
 | starlette | 1.6.0 | BSD-3-Clause | <https://github.com/Kludex/starlette> |
+| tkinterdnd2 | 0.6.2 | MIT | <https://github.com/Eliav2/tkinterdnd2> |
 | typer | 0.27.2 | MIT | <https://github.com/fastapi/typer> |
 | typing-inspection | 0.4.4 | MIT | <https://github.com/pydantic/typing-inspection> |
 | typing-extensions | 4.16.0 | PSF-2.0 | <https://github.com/python/typing_extensions> |

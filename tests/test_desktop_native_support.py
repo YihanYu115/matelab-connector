@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -14,16 +15,16 @@ def test_desktop_settings_round_trip_and_invalid_fallback(tmp_path: Path) -> Non
         api_port=9988,
         default_notebook_id="book-21",
         default_notebook_name="测试本",
+        matelab_username="researcher@example.cn",
     )
     settings.save(tmp_path)
     assert DesktopSettings.load(tmp_path, default_port=8765) == settings
     assert (tmp_path / "desktop-settings.json").read_bytes().endswith(b"\n")
 
-    (tmp_path / "desktop-settings.json").write_text(
-        '{"api_port": 8877}', encoding="utf-8"
-    )
+    (tmp_path / "desktop-settings.json").write_text('{"api_port": 8877}', encoding="utf-8")
     legacy = DesktopSettings.load(tmp_path, default_port=8765)
     assert legacy == DesktopSettings(api_port=8877)
+    assert legacy.matelab_username is None
 
     (tmp_path / "desktop-settings.json").write_text(
         '{"api_port": 8877, "default_notebook_id": "book-21"}', encoding="utf-8"
@@ -132,3 +133,52 @@ def test_native_client_manual_submission_sends_reusable_idempotency_key(
             )
 
     assert seen_keys == ["desktop-submit-001", "desktop-submit-001"]
+
+
+def test_native_client_adds_description_to_existing_record(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ui":
+            return httpx.Response(
+                200,
+                text='<meta name="bridge-csrf" content="native-test-token">',
+            )
+        if request.url.path == "/v1/records/RECORD-123/descriptions":
+            assert request.method == "POST"
+            assert request.headers["Idempotency-Key"] == "desktop-description-001"
+            assert json.loads(request.content) == {
+                "notebook_id": "21",
+                "notebook_name": "测试本",
+                "content": "复测后峰位不变。",
+                "title": "复测说明",
+            }
+            return httpx.Response(
+                201,
+                json={
+                    "description_id": "desc-1",
+                    "record_uid": "RECORD-123",
+                    "notebook_id": "21",
+                    "notebook_name": "测试本",
+                    "module_name": "Connector 补充说明",
+                    "content_sha256": "sha256:" + "a" * 64,
+                    "status": "matelab_acknowledged",
+                    "event_cursor": 7,
+                    "duplicate": False,
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    config = BridgeConfig(data_dir=tmp_path)
+    with NativeConnectorClient(
+        "http://connector.test",
+        config,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.add_record_description(
+            notebook={"id": "21", "name": "测试本"},
+            record_uid="RECORD-123",
+            title="复测说明",
+            content="复测后峰位不变。",
+            idempotency_key="desktop-description-001",
+        )
+
+    assert result["event_cursor"] == 7

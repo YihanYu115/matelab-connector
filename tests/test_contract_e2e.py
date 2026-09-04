@@ -95,3 +95,57 @@ def test_gateway_to_fake_matelab_and_independent_discovery(
             metadata = exported["dataset"][0]["data"]["Connector Metadata"]
             assert metadata["Capture ID"] == manifest["capture_id"]
             assert metadata["Capture Hash"] == receipt["manifest_sha256"]
+
+            description_payload = {
+                "notebook_id": "fake-1",
+                "notebook_name": config.experiment_notebook,
+                "title": "复测说明",
+                "content": "更换衰减器后复测, 峰位不变。<script>alert(1)</script>",
+            }
+            described = gateway.post(
+                f"/v1/records/{uid}/descriptions",
+                json=description_payload,
+                headers={"Idempotency-Key": "description-001"},
+            )
+            assert described.status_code == 201
+            assert described.json()["status"] == "matelab_acknowledged"
+            duplicate = gateway.post(
+                f"/v1/records/{uid}/descriptions",
+                json=description_payload,
+                headers={"Idempotency-Key": "description-001"},
+            )
+            assert duplicate.status_code == 200
+            assert duplicate.json()["description_id"] == described.json()["description_id"]
+            assert duplicate.json()["duplicate"] is True
+            changed_description = dict(description_payload)
+            changed_description["content"] = "另一条说明"
+            conflict = gateway.post(
+                f"/v1/records/{uid}/descriptions",
+                json=changed_description,
+                headers={"Idempotency-Key": "description-001"},
+            )
+            assert conflict.status_code == 409
+            assert conflict.json()["error"]["code"] == "idempotency_conflict"
+
+            described_export = fake.post(
+                "/eln_api/export",
+                json={"uids": [{"eln": config.experiment_notebook, "uid": uid}]},
+                headers=auth,
+            ).json()
+            module_name = described.json()["module_name"]
+            rendered_description = described_export["dataset"][0]["data"][module_name]
+            assert "更换衰减器后复测" in rendered_description
+            assert "<script>" not in rendered_description
+            assert "&lt;script&gt;" in rendered_description
+
+            events = gateway.get("/v1/events").json()
+            assert [event["type"] for event in events["events"]] == [
+                "matelab.record.synced",
+                "matelab.record.description_added",
+            ]
+            assert events["next_cursor"] == described.json()["event_cursor"]
+            filtered = gateway.get(
+                "/v1/events",
+                params={"after": 0, "type": "matelab.record.description_added"},
+            ).json()
+            assert [event["id"] for event in filtered["events"]] == [events["events"][1]["id"]]

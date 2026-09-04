@@ -16,11 +16,20 @@ from .errors import (
     ArtifactNotFoundError,
     CaptureConflictError,
     CaptureNotFoundError,
+    IdempotencyConflictError,
     IncompleteCaptureError,
     InvalidStateError,
     MappingConflictError,
 )
-from .models import CaptureEnvelope, MatelabRecordRef, RecentCandidate, SyncReceipt, SyncState
+from .models import (
+    CaptureEnvelope,
+    IntegrationEvent,
+    MatelabRecordRef,
+    RecentCandidate,
+    RecordDescriptionReceipt,
+    SyncReceipt,
+    SyncState,
+)
 from .security import redact, redact_text
 
 TERMINAL_STATES = {SyncState.COMPLETE, SyncState.ABANDONED}
@@ -185,6 +194,34 @@ class BridgeStore:
                     FOREIGN KEY (capture_id) REFERENCES captures(capture_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS record_descriptions (
+                    description_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    request_sha256 TEXT NOT NULL,
+                    record_uid TEXT NOT NULL,
+                    notebook_id TEXT NOT NULL,
+                    notebook_name TEXT NOT NULL,
+                    owner_user TEXT,
+                    module_name TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    matelab_response_json TEXT,
+                    last_error_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS integration_events (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    data_json TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_captures_state_next
                     ON captures(state, next_attempt_at, created_at);
                 CREATE INDEX IF NOT EXISTS idx_captures_recent
@@ -197,6 +234,8 @@ class BridgeStore:
                     ON request_audit(capture_id, seq);
                 CREATE INDEX IF NOT EXISTS idx_manual_submission_capture
                     ON manual_submission_idempotency(capture_id);
+                CREATE INDEX IF NOT EXISTS idx_integration_events_type_seq
+                    ON integration_events(event_type, seq);
 
                 CREATE TRIGGER IF NOT EXISTS journal_prevent_update
                 BEFORE UPDATE ON journal
@@ -208,6 +247,18 @@ class BridgeStore:
                 BEFORE DELETE ON journal
                 BEGIN
                     SELECT RAISE(ABORT, 'journal is append-only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS integration_events_prevent_update
+                BEFORE UPDATE ON integration_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'integration events are append-only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS integration_events_prevent_delete
+                BEFORE DELETE ON integration_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'integration events are append-only');
                 END;
                 """
             )
@@ -572,6 +623,8 @@ class BridgeStore:
             (*values.values(), capture_id),
         )
         self._append_journal(connection, capture_id, event, from_state, to_state, details or {})
+        if to_state == SyncState.COMPLETE:
+            self._publish_capture_synced(connection, capture_id)
 
     def claim_next(self) -> str | None:
         now = iso_now()
@@ -860,6 +913,204 @@ class BridgeStore:
                 raise CaptureNotFoundError("capture_id was not found")
             self._append_journal(connection, capture_id, event, None, None, details or {})
 
+    def reserve_record_description(
+        self,
+        *,
+        description_id: str,
+        idempotency_key: str,
+        request_sha256: str,
+        record_uid: str,
+        notebook_id: str,
+        notebook_name: str,
+        module_name: str,
+        content_sha256: str,
+    ) -> tuple[RecordDescriptionReceipt | None, bool]:
+        """Reserve a stable MatElab module name before the remote update."""
+        with self.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT * FROM record_descriptions WHERE idempotency_key=?
+                """,
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if existing["request_sha256"] != request_sha256:
+                    raise IdempotencyConflictError(
+                        "Idempotency-Key was already used for a different record description"
+                    )
+                connection.execute(
+                    """
+                    UPDATE record_descriptions SET attempt=attempt+1, updated_at=?
+                    WHERE description_id=?
+                    """,
+                    (iso_now(), existing["description_id"]),
+                )
+                if existing["status"] == "completed":
+                    return self._description_receipt_in_connection(
+                        connection, str(existing["description_id"]), duplicate=True
+                    ), True
+                return None, True
+
+            now = iso_now()
+            connection.execute(
+                """
+                INSERT INTO record_descriptions (
+                    description_id, idempotency_key, request_sha256, record_uid,
+                    notebook_id, notebook_name, module_name, content_sha256,
+                    status, attempt, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
+                """,
+                (
+                    description_id,
+                    idempotency_key,
+                    request_sha256,
+                    record_uid,
+                    notebook_id,
+                    notebook_name,
+                    module_name,
+                    content_sha256,
+                    now,
+                    now,
+                ),
+            )
+            return None, False
+
+    def complete_record_description(
+        self,
+        description_id: str,
+        *,
+        owner_user: str | None,
+        matelab_response: dict[str, Any],
+        duplicate: bool,
+    ) -> RecordDescriptionReceipt:
+        with self.connect() as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM record_descriptions WHERE description_id=?",
+                (description_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("record description reservation was not found")
+            safe_response = redact(matelab_response)
+            connection.execute(
+                """
+                UPDATE record_descriptions
+                SET owner_user=?, status='completed', matelab_response_json=?,
+                    last_error_json=NULL, updated_at=?
+                WHERE description_id=?
+                """,
+                (
+                    owner_user,
+                    json.dumps(safe_response, ensure_ascii=False, separators=(",", ":")),
+                    iso_now(),
+                    description_id,
+                ),
+            )
+            event_data = {
+                "description_id": description_id,
+                "record_uid": str(row["record_uid"]),
+                "notebook": {
+                    "id": str(row["notebook_id"]),
+                    "name": str(row["notebook_name"]),
+                    "owner_user": owner_user,
+                },
+                "module_name": str(row["module_name"]),
+                "content_sha256": str(row["content_sha256"]),
+                "durability": "matelab_acknowledged",
+            }
+            self._append_integration_event(
+                connection,
+                event_type="matelab.record.description_added",
+                subject=f"matelab-record:{row['record_uid']}",
+                data=event_data,
+                dedupe_key=f"record-description:{description_id}",
+            )
+            return self._description_receipt_in_connection(
+                connection, description_id, duplicate=duplicate
+            )
+
+    def fail_record_description(
+        self, description_id: str, *, error_code: str, message: str
+    ) -> None:
+        safe_error = {"code": error_code, "message": redact_text(message)}
+        with self.connect() as connection, connection:
+            connection.execute(
+                """
+                UPDATE record_descriptions SET status='pending', last_error_json=?, updated_at=?
+                WHERE description_id=?
+                """,
+                (
+                    json.dumps(safe_error, ensure_ascii=False, separators=(",", ":")),
+                    iso_now(),
+                    description_id,
+                ),
+            )
+
+    def _description_receipt_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        description_id: str,
+        *,
+        duplicate: bool,
+    ) -> RecordDescriptionReceipt:
+        row = connection.execute(
+            "SELECT * FROM record_descriptions WHERE description_id=?",
+            (description_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("record description was not found")
+        event = connection.execute(
+            "SELECT seq FROM integration_events WHERE dedupe_key=?",
+            (f"record-description:{description_id}",),
+        ).fetchone()
+        if event is None:
+            raise ValueError("completed record description has no integration event")
+        return RecordDescriptionReceipt(
+            description_id=str(row["description_id"]),
+            record_uid=str(row["record_uid"]),
+            notebook_id=str(row["notebook_id"]),
+            notebook_name=str(row["notebook_name"]),
+            module_name=str(row["module_name"]),
+            content_sha256=str(row["content_sha256"]),
+            event_cursor=int(event["seq"]),
+            duplicate=duplicate,
+        )
+
+    def list_integration_events(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        event_types: set[str] | None = None,
+    ) -> list[IntegrationEvent]:
+        safe_limit = max(1, min(limit, 500))
+        parameters: list[Any] = [max(0, after)]
+        where = "seq>?"
+        if event_types:
+            placeholders = ",".join("?" for _ in event_types)
+            where += f" AND event_type IN ({placeholders})"
+            parameters.extend(sorted(event_types))
+        parameters.append(safe_limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT seq, event_id, event_type, occurred_at, subject, data_json
+                FROM integration_events WHERE {where} ORDER BY seq LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return [
+            IntegrationEvent(
+                cursor=int(row["seq"]),
+                id=str(row["event_id"]),
+                type=str(row["event_type"]),
+                occurred_at=datetime.fromisoformat(row["occurred_at"]),
+                subject=str(row["subject"]),
+                data=json.loads(row["data_json"]),
+            )
+            for row in rows
+        ]
+
     def recent_experiments(
         self,
         *,
@@ -966,6 +1217,60 @@ class BridgeStore:
                     idempotency_key,
                 ),
             )
+
+    def _publish_capture_synced(self, connection: sqlite3.Connection, capture_id: str) -> None:
+        row = connection.execute(
+            """
+            SELECT c.capture_id, c.sync_id, c.capture_kind, c.manifest_sha256,
+                   m.record_ref_json
+            FROM captures AS c
+            JOIN mappings AS m ON m.capture_id=c.capture_id
+            WHERE c.capture_id=?
+            ORDER BY m.record_version DESC, m.created_at DESC LIMIT 1
+            """,
+            (capture_id,),
+        ).fetchone()
+        if row is None:
+            raise MappingConflictError("a completed capture has no MatElab mapping")
+        record_ref = json.loads(row["record_ref_json"])
+        self._append_integration_event(
+            connection,
+            event_type="matelab.record.synced",
+            subject=f"capture:{capture_id}",
+            data={
+                "capture_id": capture_id,
+                "sync_id": str(row["sync_id"]),
+                "capture_kind": str(row["capture_kind"]),
+                "manifest_sha256": str(row["manifest_sha256"]),
+                "matelab_ref": record_ref,
+            },
+            dedupe_key=f"capture:{capture_id}:synced",
+        )
+
+    def _append_integration_event(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        event_type: str,
+        subject: str,
+        data: dict[str, Any],
+        dedupe_key: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO integration_events (
+                event_id, dedupe_key, event_type, occurred_at, subject, data_json
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"evt-{uuid.uuid4()}",
+                dedupe_key,
+                event_type,
+                iso_now(),
+                subject,
+                json.dumps(redact(data), ensure_ascii=False, separators=(",", ":")),
+            ),
+        )
 
     def _append_journal(
         self,

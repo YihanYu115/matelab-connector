@@ -8,7 +8,9 @@
 - 登录自己的 MatElab 账号，并自动安全保存短期 Token；密码不会落盘；
 - 把登录页和功能控制台分开，显示当前账号可以访问的记录本；
 - 手动填写标题、正文和附件，一键提交到所选记录本；
+- 给已有实验记录追加带标题的补充描述，并用幂等键避免重试时重复添加；
 - 在可设置的 `127.0.0.1` 端口向其他本地程序提供 HTTP API；
+- 通过可断线续读的事件游标和 SSE 实时流，把记录同步结果通知其他本地服务；
 - 在断网、登录过期或程序重启后保留任务，并给出明确的错误原因和处理建议。
 
 ## 直接使用原生应用（推荐）
@@ -46,12 +48,22 @@
 - 上传附件：`PUT /v1/captures/{capture_id}/artifacts/{artifact_id}`
 - 提交同步：`POST /v1/captures/{capture_id}/commit`
 - 查询回执：`GET /v1/captures/{capture_id}`
+- 追加记录描述：`POST /v1/records/{record_uid}/descriptions`
+- 补读事件：`GET /v1/events?after={cursor}`
+- 实时监听：`GET /v1/events/stream?after={cursor}`（Server-Sent Events）
 
 完整错误格式与调用方处理规则见 [错误处理规范](docs/error-handling.md)。默认只允许本机访问；如需监听局域网，必须在 `.env` 中启用三种彼此不同的作用域 Token。
 
 先在原生控制台“手动提交”页选择一个可写记录本并点击“设为 API 默认记录本”。此后调用 `POST /v1/manual-submissions` 只需发送 `title`、`content` 和可选的 `attachments`；仍可同时传入 `notebook_id` 与 `notebook_name` 来覆盖默认值。
 
+原生控制台侧栏的“追加描述”页也可直接更新已有记录：选择记录本、粘贴记录 UID，并填写要新增的描述即可。
+“手动提交”页的附件区支持多文件选择、从文件管理器拖入，以及复制文件后按 `Ctrl+V` 粘贴；目录、无效路径和重复文件会被忽略。
+
 自动调用时应为一次逻辑提交生成 `Idempotency-Key` 请求头，并在超时重试时原样复用。同一个 Key 和完全相同的字段/附件会返回原 `capture_id`；同一个 Key 携带不同内容会返回 HTTP 409。没有该请求头时，每次调用都视为一条新记录。
+
+事件流目前发布两类稳定事件：新记录完成上传及回读核验后的
+`matelab.record.synced`，以及补充描述被 MatElab 接口接受后的
+`matelab.record.description_added`。事件先写入本地 SQLite，再对监听方可见；监听方应持久化每条事件的 `cursor`，重连时通过 `after` 或 SSE `Last-Event-ID` 续读。具体请求示例见[中文 API 快速接入](docs/api-quickstart.zh-CN.md)。
 
 ## 开发和离线验证
 

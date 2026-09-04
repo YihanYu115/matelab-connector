@@ -32,6 +32,8 @@ def main() -> None:
         str(build_root),
         "--workpath",
         str(build_root / "pyinstaller"),
+        "--additional-hooks-dir",
+        str(root / "tools" / "pyinstaller_hooks"),
         "--windowed",
         "--name",
         name,

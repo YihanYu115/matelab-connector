@@ -13,10 +13,12 @@ Source checked on 2026-09-04: [MatElab ELN help](https://matelab.iphy.ac.cn/eln/
 | Items | `POST /eln_api/items` | Used before import to reconcile an uncertain prior create. |
 | Export | `POST /eln_api/export` | Exact UID request; complete response saved as canonical JSON and hashed. |
 | Search | `POST /eln_api/search` | Exposed by the narrow client for contract verification. |
-| Update | `POST /eln_api/update` | Used only by GUI manual records after `/create`; idempotent `addModule` names avoid duplicate modules during retry. |
+| Update | `POST /eln_api/update` | Used by GUI manual records after `/create` and by the existing-record description endpoint; idempotent `addModule` names avoid duplicate modules during retry. |
 | ELNs | `POST /eln_api/elns` | Used by `doctor --online`. |
 
 MatElab response `code` values are classified as: `0` success, `refresh` refresh-and-retry once, `1` authentication/authorization attention, `2` and `4` contract/input attention, and `3` retryable server failure. HTTP 429/5xx and network timeouts are retryable.
+
+The description endpoint maps plain text to a new `richtext` module and escapes it as HTML. It validates the selected notebook's stable ID/name pair and verifies that the UID appears in that notebook before updating. Its `matelab_acknowledged` receipt intentionally reflects only the documented update acknowledgement: while another user is collaboratively editing the record, MatElab says the active editor must save the modified working version.
 
 The official authentication page says both 60 minutes and 30 minutes for the Access Token and describes expiry as seconds while examples use millisecond-scale values. The client therefore trusts `expiredAt`, accepts either seconds or milliseconds, and never assumes a fixed lifetime.
 

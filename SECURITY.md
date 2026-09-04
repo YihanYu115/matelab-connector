@@ -24,6 +24,11 @@ Operational rules:
   operating-system credential store.
 - Treat submitted Artifact files as opaque data. The bridge hashes and transports them but
   never executes them.
+- Treat `/v1/events` and `/v1/events/stream` as metadata-bearing status APIs. In token mode,
+  protect them with the status-scoped token; do not forward their MatElab record references to
+  an untrusted service.
+- The Connector does not make outbound calls to listener-supplied webhook URLs. Downstream
+  services connect to the cursor or SSE endpoints instead.
 - If a credential may have leaked, revoke the affected MatElab token or account first, then
   preserve only redacted diagnostics.
 

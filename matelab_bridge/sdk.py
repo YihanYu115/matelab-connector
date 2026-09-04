@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import time
-from collections.abc import Mapping
+import uuid
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
 
-from .models import CaptureEnvelope, SyncReceipt, SyncState
+from .models import (
+    CaptureEnvelope,
+    IntegrationEvent,
+    IntegrationEventBatch,
+    RecordDescriptionReceipt,
+    SyncReceipt,
+    SyncState,
+)
 
 
 class BridgeClient:
@@ -98,6 +106,80 @@ class BridgeClient:
         )
         response.raise_for_status()
         return cast(list[dict[str, Any]], response.json())
+
+    def add_record_description(
+        self,
+        record_uid: str,
+        content: str,
+        *,
+        title: str | None = None,
+        notebook_id: str | None = None,
+        notebook_name: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> RecordDescriptionReceipt:
+        if bool(notebook_id) != bool(notebook_name):
+            raise ValueError("notebook_id and notebook_name must be provided together")
+        payload: dict[str, Any] = {"content": content}
+        if title is not None:
+            payload["title"] = title
+        if notebook_id is not None and notebook_name is not None:
+            payload["notebook_id"] = notebook_id
+            payload["notebook_name"] = notebook_name
+        headers = self._headers(self.submit_token)
+        headers["Idempotency-Key"] = idempotency_key or f"sdk-{uuid.uuid4()}"
+        response = self.http.post(
+            f"/v1/records/{record_uid}/descriptions",
+            json=payload,
+            headers=headers,
+        )
+        response.raise_for_status()
+        return RecordDescriptionReceipt.model_validate(response.json())
+
+    def events(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        event_types: list[str] | None = None,
+    ) -> IntegrationEventBatch:
+        params: list[tuple[str, str | int | float | bool | None]] = [
+            ("after", after),
+            ("limit", limit),
+        ]
+        params.extend(("type", event_type) for event_type in event_types or [])
+        response = self.http.get(
+            "/v1/events",
+            params=params,
+            headers=self._headers(self.status_token),
+        )
+        response.raise_for_status()
+        return IntegrationEventBatch.model_validate(response.json())
+
+    def stream_events(
+        self,
+        *,
+        after: int = 0,
+        event_types: list[str] | None = None,
+    ) -> Iterator[IntegrationEvent]:
+        """Yield replayed and live events from one SSE connection."""
+        params: list[tuple[str, str | int | float | bool | None]] = [("after", after)]
+        params.extend(("type", event_type) for event_type in event_types or [])
+        with self.http.stream(
+            "GET",
+            "/v1/events/stream",
+            params=params,
+            headers=self._headers(self.status_token),
+        ) as response:
+            response.raise_for_status()
+            data_lines: list[str] = []
+            for line in response.iter_lines():
+                if not line:
+                    if data_lines:
+                        yield IntegrationEvent.model_validate_json("\n".join(data_lines))
+                        data_lines.clear()
+                    continue
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
 
     def submit_bundle(
         self,

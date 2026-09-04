@@ -8,11 +8,12 @@ import getpass
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tkinter as tk
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
@@ -20,6 +21,8 @@ from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, TypeVar
+
+from tkinterdnd2 import COPY, DND_FILES, TkinterDnD  # type: ignore[import-untyped]
 
 from .config import BridgeConfig
 from .desktop_settings import DesktopSettings
@@ -94,6 +97,56 @@ def _human_time(value: Any) -> str:
     except ValueError:
         return str(value)
     return parsed.astimezone().strftime("%m-%d %H:%M:%S")
+
+
+def _windows_clipboard_files() -> list[Path]:
+    """Read Explorer's CF_HDROP file list without copying file contents."""
+    if platform.system() != "Windows":
+        return []
+
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    is_format_available = user32.IsClipboardFormatAvailable
+    is_format_available.argtypes = [wintypes.UINT]
+    is_format_available.restype = wintypes.BOOL
+    open_clipboard = user32.OpenClipboard
+    open_clipboard.argtypes = [wintypes.HWND]
+    open_clipboard.restype = wintypes.BOOL
+    get_clipboard_data = user32.GetClipboardData
+    get_clipboard_data.argtypes = [wintypes.UINT]
+    get_clipboard_data.restype = wintypes.HANDLE
+    close_clipboard = user32.CloseClipboard
+    close_clipboard.argtypes = []
+    close_clipboard.restype = wintypes.BOOL
+    drag_query_file = shell32.DragQueryFileW
+    drag_query_file.argtypes = [
+        wintypes.HANDLE,
+        wintypes.UINT,
+        wintypes.LPWSTR,
+        wintypes.UINT,
+    ]
+    drag_query_file.restype = wintypes.UINT
+
+    cf_hdrop = 15
+    if not is_format_available(cf_hdrop) or not open_clipboard(None):
+        return []
+    try:
+        handle = get_clipboard_data(cf_hdrop)
+        if not handle:
+            return []
+        count = int(drag_query_file(handle, 0xFFFFFFFF, None, 0))
+        paths: list[Path] = []
+        for index in range(count):
+            length = int(drag_query_file(handle, index, None, 0))
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            drag_query_file(handle, index, buffer, length + 1)
+            paths.append(Path(buffer.value))
+        return paths
+    finally:
+        close_clipboard()
 
 
 class NativeConnectorApp:
@@ -232,7 +285,7 @@ class LoginPage(tk.Frame):
     def __init__(self, parent: tk.Widget, app: NativeConnectorApp) -> None:
         super().__init__(parent, bg=COLORS["canvas"])
         self.app = app
-        self.username = tk.StringVar()
+        self.username = tk.StringVar(value=app.settings.matelab_username or "")
         self.password = tk.StringVar()
         self.status = tk.StringVar(value="正在启动本地 Connector API…")
         self.error = tk.StringVar()
@@ -413,6 +466,11 @@ class LoginPage(tk.Frame):
         def success(notebooks: list[dict[str, Any]]) -> None:
             self.password.set("")
             self.login_button.configure(state="normal", text="授权并进入控制台  →")
+            self.app.settings = replace(
+                self.app.settings,
+                matelab_username=username,
+            )
+            self.app.settings.save(self.app.config.data_dir)
             self.app.console_page.activate(notebooks)
             self.app.show_console()
 
@@ -432,6 +490,7 @@ class ConsolePage(tk.Frame):
         self.queue_summary = tk.StringVar(value="尚无任务")
         self.notice = tk.StringVar()
         self.default_notebook_status = tk.StringVar(value="尚未设置 API 默认记录本")
+        self.account_value = tk.StringVar(value="未登录")
 
         sidebar = tk.Frame(self, bg="#122D23", width=235, padx=22, pady=28)
         sidebar.pack(side="left", fill="y")
@@ -454,6 +513,7 @@ class ConsolePage(tk.Frame):
         for key, label in (
             ("overview", "总览"),
             ("upload", "手动提交"),
+            ("update", "追加描述"),
             ("tasks", "任务与错误"),
             ("settings", "API 设置"),
         ):
@@ -475,8 +535,27 @@ class ConsolePage(tk.Frame):
             )
             button.pack(fill="x", pady=2)
             self.nav_buttons[key] = button
+        account_footer = tk.Frame(sidebar, bg="#122D23")
+        account_footer.pack(side="bottom", fill="x")
+        tk.Frame(account_footer, bg="#315446", height=1).pack(fill="x", pady=(0, 14))
+        tk.Label(
+            account_footer,
+            text="当前登录账号",
+            font=("Microsoft YaHei UI", 8),
+            fg="#92B1A4",
+            bg="#122D23",
+        ).pack(anchor="w", padx=14)
+        tk.Label(
+            account_footer,
+            textvariable=self.account_value,
+            font=("Microsoft YaHei UI", 9, "bold"),
+            fg=COLORS["white"],
+            bg="#122D23",
+            justify="left",
+            wraplength=175,
+        ).pack(anchor="w", padx=14, pady=(3, 8))
         tk.Button(
-            sidebar,
+            account_footer,
             text="退出 MatElab 账号",
             anchor="w",
             command=self.logout,
@@ -490,7 +569,7 @@ class ConsolePage(tk.Frame):
             activebackground="#214738",
             activeforeground=COLORS["white"],
             cursor="hand2",
-        ).pack(side="bottom", fill="x")
+        ).pack(fill="x")
 
         body = tk.Frame(self, bg=COLORS["canvas"])
         body.pack(side="left", fill="both", expand=True)
@@ -515,6 +594,7 @@ class ConsolePage(tk.Frame):
         self.pages: dict[str, tk.Frame] = {}
         self._build_overview()
         self._build_upload()
+        self._build_update()
         self._build_tasks()
         self._build_settings()
         self.show_page("overview")
@@ -708,20 +788,155 @@ class ConsolePage(tk.Frame):
             pady=8,
         )
         self.content_text.pack(fill="both", expand=True)
-        attach_row = tk.Frame(form, bg=COLORS["panel"])
-        attach_row.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            form,
+            text="附件（可选）",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            fg=COLORS["ink"],
+            bg=COLORS["panel"],
+        ).pack(anchor="w", pady=(12, 5))
+        self.attachment_text = tk.StringVar()
         self.attachment_label = tk.Label(
+            form,
+            textvariable=self.attachment_text,
+            font=("Microsoft YaHei UI", 9),
+            fg=COLORS["muted"],
+            bg=COLORS["panel_alt"],
+            anchor="center",
+            justify="center",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=12,
+            cursor="hand2",
+        )
+        self.attachment_label.pack(fill="x")
+        self.attachment_label.bind("<Button-1>", lambda _event: self.choose_attachments())
+        drop_target: Any = self.attachment_label
+        drop_target.drop_target_register(DND_FILES)
+        drop_target.dnd_bind("<<DropEnter>>", self._attachment_drag_enter)
+        drop_target.dnd_bind("<<DropLeave>>", self._attachment_drag_leave)
+        drop_target.dnd_bind("<<Drop>>", self._drop_attachments)
+        self.bind_all("<Control-v>", self._paste_attachments, add="+")
+        self._update_attachment_label()
+
+        attach_row = tk.Frame(form, bg=COLORS["panel"])
+        attach_row.pack(fill="x", pady=(10, 0))
+        self._action_button(attach_row, "选择附件", self.choose_attachments).pack(side="left")
+        tk.Button(
             attach_row,
-            text="未选择附件",
+            text="清空附件",
+            command=self.clear_attachments,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=9,
+            font=("Microsoft YaHei UI", 9),
+            bg=COLORS["panel_alt"],
+            fg=COLORS["muted"],
+            activebackground=COLORS["green_soft"],
+            activeforeground=COLORS["ink"],
+            cursor="hand2",
+        ).pack(side="left", padx=(10, 0))
+        self.submit_button = self._action_button(attach_row, "提交到本地队列", self.submit)
+        self.submit_button.pack(side="left", padx=(10, 0))
+
+    def _build_update(self) -> None:
+        page = self._new_page("update")
+        self._heading(
+            page,
+            "给已有记录追加描述",
+            "根据记录 UID 向 MatElab 中的已有记录新增一段富文本说明。",
+        )
+        form = self._card(page, fill="both", expand=True)
+        target_row = tk.Frame(form, bg=COLORS["panel"])
+        target_row.pack(fill="x")
+        tk.Label(
+            target_row,
+            text="记录所在的记录本",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            fg=COLORS["ink"],
+            bg=COLORS["panel"],
+        ).pack(side="left")
+        tk.Button(
+            target_row,
+            text="刷新记录本",
+            command=self.refresh_notebooks,
+            relief="flat",
+            bd=0,
+            fg=COLORS["green"],
+            bg=COLORS["panel"],
+            activebackground=COLORS["panel"],
+            cursor="hand2",
+        ).pack(side="right")
+        self.update_notebook_value = tk.StringVar()
+        self.update_notebook_combo = ttk.Combobox(
+            form,
+            textvariable=self.update_notebook_value,
+            state="readonly",
+            style="Connector.TCombobox",
+        )
+        self.update_notebook_combo.pack(fill="x", pady=(6, 14), ipady=2)
+
+        self.update_uid_value = tk.StringVar()
+        self.update_title_value = tk.StringVar()
+        for label, variable in (
+            ("记录 UID", self.update_uid_value),
+            ("说明标题（可选）", self.update_title_value),
+        ):
+            tk.Label(
+                form,
+                text=label,
+                font=("Microsoft YaHei UI", 9, "bold"),
+                fg=COLORS["ink"],
+                bg=COLORS["panel"],
+            ).pack(anchor="w", pady=(2, 5))
+            ttk.Entry(form, textvariable=variable, style="Connector.TEntry").pack(
+                fill="x", pady=(0, 10), ipady=2
+            )
+        tk.Label(
+            form,
+            text="新增描述",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            fg=COLORS["ink"],
+            bg=COLORS["panel"],
+        ).pack(anchor="w", pady=(2, 5))
+        self.update_content_text = tk.Text(
+            form,
+            height=9,
+            wrap="word",
+            font=("Microsoft YaHei UI", 10),
+            relief="solid",
+            bd=1,
+            highlightthickness=0,
+            bg=COLORS["white"],
+            fg=COLORS["ink"],
+            insertbackground=COLORS["ink"],
+            padx=10,
+            pady=8,
+        )
+        self.update_content_text.pack(fill="both", expand=True)
+        action_row = tk.Frame(form, bg=COLORS["panel"])
+        action_row.pack(fill="x", pady=(12, 0))
+        self.update_result = tk.StringVar(
+            value="记录 UID 可从 MatElab 页面或“任务与错误”的任务详情中复制。"
+        )
+        tk.Label(
+            action_row,
+            textvariable=self.update_result,
             font=("Microsoft YaHei UI", 9),
             fg=COLORS["muted"],
             bg=COLORS["panel"],
             anchor="w",
+            justify="left",
+            wraplength=570,
+        ).pack(side="left", fill="x", expand=True)
+        self.update_button = self._action_button(
+            action_row,
+            "追加到 MatElab 记录",
+            self.add_description,
         )
-        self.attachment_label.pack(side="left", fill="x", expand=True)
-        self._action_button(attach_row, "选择附件", self.choose_attachments).pack(side="left")
-        self.submit_button = self._action_button(attach_row, "提交到本地队列", self.submit)
-        self.submit_button.pack(side="left", padx=(10, 0))
+        self.update_button.pack(side="right", padx=(12, 0))
 
     def _build_tasks(self) -> None:
         page = self._new_page("tasks")
@@ -843,6 +1058,7 @@ class ConsolePage(tk.Frame):
 
     def activate(self, notebooks: list[dict[str, Any]]) -> None:
         self.notebooks = notebooks
+        self.account_value.set(self.app.settings.matelab_username or "账号名未记录，请重新登录一次")
         self._update_notebook_combo()
         self.port_value.set(str(self.app.service.port))
         self.api_url.set(f"API  {self.app.service.base_url}")
@@ -868,6 +1084,7 @@ class ConsolePage(tk.Frame):
         editable = [item for item in self.notebooks if item.get("editable")]
         values = [f"{item['name']}  ·  {item.get('access', 'accessible')}" for item in editable]
         self.notebook_combo.configure(values=values)
+        self.update_notebook_combo.configure(values=values)
         default_index = next(
             (
                 index
@@ -879,10 +1096,14 @@ class ConsolePage(tk.Frame):
         )
         if default_index is not None:
             self.notebook_combo.current(default_index)
+            self.update_notebook_combo.current(default_index)
         elif values and self.notebook_value.get() not in values:
             self.notebook_combo.current(0)
+        if values and self.update_notebook_value.get() not in values:
+            self.update_notebook_combo.current(0)
         if not values:
             self.notebook_value.set("")
+            self.update_notebook_value.set("")
         self._update_default_notebook_status(default_index is not None)
 
     def _update_default_notebook_status(self, available: bool) -> None:
@@ -899,6 +1120,13 @@ class ConsolePage(tk.Frame):
 
     def selected_notebook(self) -> dict[str, Any] | None:
         index = self.notebook_combo.current()
+        editable = [item for item in self.notebooks if item.get("editable")]
+        if 0 <= index < len(editable):
+            return editable[index]
+        return None
+
+    def selected_update_notebook(self) -> dict[str, Any] | None:
+        index = self.update_notebook_combo.current()
         editable = [item for item in self.notebooks if item.get("editable")]
         if 0 <= index < len(editable):
             return editable[index]
@@ -973,10 +1201,81 @@ class ConsolePage(tk.Frame):
         values = filedialog.askopenfilenames(title="选择记录附件", parent=self)
         if not values:
             return
-        self.attachments = [Path(value) for value in values]
-        names = "、".join(path.name for path in self.attachments[:3])
-        suffix = "…" if len(self.attachments) > 3 else ""
-        self.attachment_label.configure(text=f"{len(self.attachments)} 个附件：{names}{suffix}")
+        self._add_attachment_paths(values, source="文件选择器")
+
+    def clear_attachments(self) -> None:
+        self.attachments = []
+        self._update_attachment_label()
+        self.notice.set("已清空待提交附件")
+
+    def _update_attachment_label(self) -> None:
+        if not self.attachments:
+            self.attachment_text.set(
+                "把文件拖到这里，或在资源管理器复制文件后按 Ctrl+V\n"
+                "也可以点击此区域或下方按钮选择文件"
+            )
+            return
+        names = "、".join(path.name for path in self.attachments[:4])
+        suffix = "…" if len(self.attachments) > 4 else ""
+        self.attachment_text.set(f"已选择 {len(self.attachments)} 个附件\n{names}{suffix}")
+
+    def _add_attachment_paths(self, values: Iterable[str | Path], *, source: str) -> int:
+        existing = {os.path.normcase(str(path)) for path in self.attachments}
+        added = 0
+        ignored = 0
+        for value in values:
+            try:
+                path = Path(str(value)).expanduser().resolve()
+            except (OSError, RuntimeError):
+                ignored += 1
+                continue
+            key = os.path.normcase(str(path))
+            if not path.is_file() or key in existing:
+                ignored += 1
+                continue
+            self.attachments.append(path)
+            existing.add(key)
+            added += 1
+        self._update_attachment_label()
+        if added:
+            detail = f"，忽略 {ignored} 个目录、无效路径或重复文件" if ignored else ""
+            self.notice.set(f"通过{source}加入 {added} 个附件{detail}")
+        elif ignored:
+            self.notice.set("没有加入文件：目录、无效路径和重复文件会被忽略")
+        return added
+
+    def _attachment_drag_enter(self, _event: Any) -> str:
+        self.attachment_label.configure(bg=COLORS["green_soft"], fg=COLORS["green"])
+        return str(COPY)
+
+    def _attachment_drag_leave(self, _event: Any) -> str:
+        self.attachment_label.configure(bg=COLORS["panel_alt"], fg=COLORS["muted"])
+        return str(COPY)
+
+    def _drop_attachments(self, event: Any) -> str:
+        self.attachment_label.configure(bg=COLORS["panel_alt"], fg=COLORS["muted"])
+        values = self.tk.splitlist(str(event.data))
+        self._add_attachment_paths(values, source="拖放")
+        return str(COPY)
+
+    def _paste_attachments(self, _event: Any) -> str | None:
+        if self.current_page != "upload":
+            return None
+        paths = _windows_clipboard_files()
+        if not paths:
+            try:
+                clipboard_text = self.clipboard_get().strip()
+            except tk.TclError:
+                return None
+            try:
+                values = self.tk.splitlist(clipboard_text)
+            except tk.TclError:
+                values = (clipboard_text,)
+            paths = [Path(value) for value in values if Path(value).is_file()]
+        if not paths:
+            return None
+        self._add_attachment_paths(paths, source="剪贴板")
+        return "break"
 
     def submit(self) -> None:
         notebook = self.selected_notebook()
@@ -1006,12 +1305,62 @@ class ConsolePage(tk.Frame):
             self.title_value.set("")
             self.content_text.delete("1.0", "end")
             self.attachments = []
-            self.attachment_label.configure(text="未选择附件")
+            self._update_attachment_label()
             self.notice.set(f"本机已接收：{result['capture_id']}，后台正在同步")
             self.show_page("tasks")
 
         def failure(exc: BaseException) -> None:
             self.submit_button.configure(state="normal", text="提交到本地队列")
+            self._show_operation_error(exc)
+
+        self.app._run(operation, success, failure)
+
+    def add_description(self) -> None:
+        notebook = self.selected_update_notebook()
+        record_uid = self.update_uid_value.get().strip()
+        title = self.update_title_value.get().strip()
+        content = self.update_content_text.get("1.0", "end-1c").strip()
+        if notebook is None:
+            self._show_operation_error(ValueError("请先选择记录所在的可写记录本。"))
+            return
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", record_uid):
+            self._show_operation_error(
+                ValueError("请输入有效的记录 UID，只能使用字母、数字、点、下划线、冒号和连字符。")
+            )
+            return
+        if len(title) > 120:
+            self._show_operation_error(ValueError("说明标题不能超过 120 个字符。"))
+            return
+        if not content:
+            self._show_operation_error(ValueError("新增描述不能为空。"))
+            return
+        if len(content) > 100_000:
+            self._show_operation_error(ValueError("新增描述不能超过 100000 个字符。"))
+            return
+        self.update_button.configure(state="disabled", text="正在更新…")
+        self.update_result.set("正在验证记录并提交到 MatElab…")
+        self.notice.set(f"正在更新记录 {record_uid}…")
+
+        def operation() -> dict[str, Any]:
+            return self.app.require_client().add_record_description(
+                notebook=notebook,
+                record_uid=record_uid,
+                title=title or None,
+                content=content,
+            )
+
+        def success(result: dict[str, Any]) -> None:
+            self.update_button.configure(state="normal", text="追加到 MatElab 记录")
+            self.update_title_value.set("")
+            self.update_content_text.delete("1.0", "end")
+            self.update_result.set(
+                f"更新成功 · 新增模块：{result['module_name']} · 事件游标：{result['event_cursor']}"
+            )
+            self.notice.set(f"记录 {record_uid} 已追加描述")
+
+        def failure(exc: BaseException) -> None:
+            self.update_button.configure(state="normal", text="追加到 MatElab 记录")
+            self.update_result.set("更新失败，请根据错误提示检查记录本和记录 UID。")
             self._show_operation_error(exc)
 
         self.app._run(operation, success, failure)
@@ -1135,6 +1484,12 @@ class ConsolePage(tk.Frame):
     def logout(self) -> None:
         def success(_value: object) -> None:
             self.notebooks = []
+            self.account_value.set("未登录")
+            self.app.settings = replace(
+                self.app.settings,
+                matelab_username=None,
+            )
+            self.app.settings.save(self.app.config.data_dir)
             self.app.login_page.password.set("")
             self.app.login_page.error.set("")
             self.app.login_page.set_status(f"本地 API 已启动：{self.app.service.base_url}")
@@ -1179,8 +1534,8 @@ def main() -> None:
         except (AttributeError, OSError):
             pass
     try:
-        root = tk.Tk()
-    except tk.TclError as exc:
+        root = TkinterDnD.Tk()
+    except (RuntimeError, tk.TclError) as exc:
         print(
             f"MatElab Connector could not initialize its native interface: {exc}",
             file=sys.stderr,

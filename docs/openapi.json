@@ -259,6 +259,72 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "IntegrationEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "minimum": 1.0,
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "type": {
+            "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z0-9_]+)+$",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cursor",
+          "id",
+          "type",
+          "occurred_at",
+          "subject",
+          "data"
+        ],
+        "title": "IntegrationEvent",
+        "type": "object"
+      },
+      "IntegrationEventBatch": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "next_cursor": {
+            "minimum": 0.0,
+            "title": "Next Cursor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "events",
+          "next_cursor"
+        ],
+        "title": "IntegrationEventBatch",
+        "type": "object"
+      },
       "ManualSubmissionAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -415,6 +481,117 @@
           "producer_id"
         ],
         "title": "RecentCandidate",
+        "type": "object"
+      },
+      "RecordDescriptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "content_sha256": {
+            "pattern": "^sha256:[0-9a-fA-F]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description_id": {
+            "title": "Description Id",
+            "type": "string"
+          },
+          "duplicate": {
+            "default": false,
+            "title": "Duplicate",
+            "type": "boolean"
+          },
+          "event_cursor": {
+            "minimum": 1.0,
+            "title": "Event Cursor",
+            "type": "integer"
+          },
+          "module_name": {
+            "title": "Module Name",
+            "type": "string"
+          },
+          "notebook_id": {
+            "title": "Notebook Id",
+            "type": "string"
+          },
+          "notebook_name": {
+            "title": "Notebook Name",
+            "type": "string"
+          },
+          "record_uid": {
+            "title": "Record Uid",
+            "type": "string"
+          },
+          "status": {
+            "const": "matelab_acknowledged",
+            "default": "matelab_acknowledged",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description_id",
+          "record_uid",
+          "notebook_id",
+          "notebook_name",
+          "module_name",
+          "content_sha256",
+          "event_cursor"
+        ],
+        "title": "RecordDescriptionReceipt",
+        "type": "object"
+      },
+      "RecordDescriptionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "notebook_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notebook Id"
+          },
+          "notebook_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notebook Name"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "RecordDescriptionRequest",
         "type": "object"
       },
       "SyncReceipt": {
@@ -619,7 +796,7 @@
   "info": {
     "description": "Durable local Capture Envelope submission gateway",
     "title": "MatElab Desktop Bridge",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1498,6 +1675,205 @@
         ]
       }
     },
+    "/v1/events": {
+      "get": {
+        "operationId": "integration_events_v1_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-bridge-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationEventBatch"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Integration Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/v1/events/stream": {
+      "get": {
+        "description": "Replay durable events after a cursor, then keep the SSE connection open.",
+        "operationId": "stream_events_v1_events_stream_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "heartbeat_seconds",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 60,
+              "minimum": 5,
+              "title": "Heartbeat Seconds",
+              "type": "number"
+            }
+          },
+          {
+            "in": "header",
+            "name": "last-event-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-bridge-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A replayable Server-Sent Events stream."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
     "/v1/manual-submissions": {
       "post": {
         "description": "Simple multipart endpoint for local programs that submit human-readable notes.",
@@ -1571,6 +1947,101 @@
         "summary": "Api Manual Submission",
         "tags": [
           "captures"
+        ]
+      }
+    },
+    "/v1/records/{record_uid}/descriptions": {
+      "post": {
+        "description": "Append a uniquely named rich-text description module to an existing record.",
+        "operationId": "add_record_description_v1_records__record_uid__descriptions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_uid",
+            "required": true,
+            "schema": {
+              "title": "Record Uid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-bridge-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Bridge-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordDescriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordDescriptionReceipt"
+                }
+              }
+            },
+            "description": "An idempotent replay of an already acknowledged description."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordDescriptionReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Record Description",
+        "tags": [
+          "records"
         ]
       }
     },

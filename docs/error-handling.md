@@ -39,6 +39,9 @@
 | 403 | `notebook_not_writable` | 选择了公开或只读记录本 | 选择自己的记录本，或申请共享记录本的编辑权限 |
 | 409 | `default_notebook_not_configured` | 调用方省略了记录本，但 Connector 尚未设置默认记录本 | 在原生控制台选择记录本并点击“设为 API 默认记录本” |
 | 422 | `notebook_selection_incomplete` | 只提供了 `notebook_id` 或 `notebook_name` 之一 | 同时提供两个字段，或同时省略以使用默认记录本 |
+| 404 | `record_not_found` | 所选记录本中没有目标 `record_uid` | 核对同步回执中的 UID 和记录本 |
+| 409 | `record_not_writable` | 目标记录已锁定、签名或定稿 | 在 MatElab 中确认记录状态；不得自动覆盖 |
+| 409 | `idempotency_conflict` | 同一描述幂等键被用于不同记录、记录本或内容 | 为新的描述生成新键；原操作重试时保持请求不变 |
 | 409 | `capture_identity_conflict` | 同一 `capture_id` 或 `Idempotency-Key` 对应不同内容 | 为新内容生成新的编号；重试原操作时保持内容不变 |
 | 409 | `artifact_conflict` | 附件策略或状态冲突 | 核对 manifest 与附件编号 |
 | 409 | `invalid_state` | 当前同步状态不接受该操作 | 先查询回执；失败任务使用维护重试接口 |
@@ -62,6 +65,13 @@
 6. `retry_wait` 时保留本机数据并显示自动重试，不要求用户重新选择附件。
 7. `auth_required` 时保留本机数据；再次登录成功后，连接器将所有仅因认证暂停的任务恢复为 `ready`。
 8. `needs_attention` 和 `matelab_conflict` 不得自动覆盖远端内容。
+
+## 事件消费者
+
+- 事件读取和 SSE 使用状态作用域 Token；追加描述使用提交作用域 Token。
+- 消费者应在本地业务处理成功后持久化数字 `cursor`，断线重连时传给 `after` 或 `Last-Event-ID`。
+- 事件按 SQLite 全局游标排序并至少可重放一次；消费者必须按事件 `id` 或 `cursor` 幂等处理。
+- 事件载荷不包含补充描述正文，只包含内容 SHA-256、目标 UID、记录本和 MatElab 引用等路由元数据。
 
 ## 桌面启动与端口错误
 

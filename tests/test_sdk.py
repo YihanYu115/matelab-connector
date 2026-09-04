@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -154,3 +155,60 @@ def test_sdk_wait_timeout() -> None:
     with pytest.raises(TimeoutError):
         client.wait("capture", timeout=0, interval=0)
     client.close()
+
+
+def test_sdk_add_description_and_receive_events() -> None:
+    now = datetime.now(UTC).isoformat()
+    event = {
+        "cursor": 7,
+        "id": "evt-7",
+        "type": "matelab.record.description_added",
+        "occurred_at": now,
+        "subject": "matelab-record:record-1",
+        "data": {"description_id": "desc-1"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/records/record-1/descriptions":
+            assert request.headers["X-Bridge-Token"] == "submit"
+            assert request.headers["Idempotency-Key"] == "stable-key"
+            return httpx.Response(
+                201,
+                json={
+                    "description_id": "desc-1",
+                    "record_uid": "record-1",
+                    "notebook_id": "book-1",
+                    "notebook_name": "自动实验记录",
+                    "module_name": "Connector 补充说明 · 123",
+                    "content_sha256": f"sha256:{'b' * 64}",
+                    "status": "matelab_acknowledged",
+                    "event_cursor": 7,
+                    "duplicate": False,
+                },
+            )
+        assert request.headers["X-Bridge-Token"] == "status"
+        if request.url.path == "/v1/events":
+            assert request.url.params.get("after") == "3"
+            return httpx.Response(200, json={"events": [event], "next_cursor": 7})
+        if request.url.path == "/v1/events/stream":
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                text=(
+                    f"id: 7\nevent: matelab.record.description_added\ndata: {json.dumps(event)}\n\n"
+                ),
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    http = httpx.Client(base_url="http://bridge", transport=httpx.MockTransport(handler))
+    with BridgeClient(http_client=http, submit_token="submit", status_token="status") as client:
+        receipt_value = client.add_record_description(
+            "record-1",
+            "复测结果一致",
+            notebook_id="book-1",
+            notebook_name="自动实验记录",
+            idempotency_key="stable-key",
+        )
+        assert receipt_value.event_cursor == 7
+        assert client.events(after=3).events[0].id == "evt-7"
+        assert [item.cursor for item in client.stream_events(after=3)] == [7]

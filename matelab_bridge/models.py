@@ -313,3 +313,36 @@ class RecentCandidate(StrictModel):
     occurred_at: datetime
     actor_id: str
     producer_id: str
+
+
+class RecordDescriptionRequest(StrictModel):
+    content: str = Field(min_length=1, max_length=100_000)
+    title: str | None = Field(default=None, max_length=120)
+    notebook_id: str | None = Field(default=None, min_length=1, max_length=255)
+    notebook_name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class RecordDescriptionReceipt(StrictModel):
+    description_id: str
+    record_uid: str
+    notebook_id: str
+    notebook_name: str
+    module_name: str
+    content_sha256: str = Field(pattern=SHA256_PATTERN)
+    status: Literal["matelab_acknowledged"] = "matelab_acknowledged"
+    event_cursor: int = Field(ge=1)
+    duplicate: bool = False
+
+
+class IntegrationEvent(StrictModel):
+    cursor: int = Field(ge=1)
+    id: str
+    type: str = Field(pattern=r"^[a-z][a-z0-9]*(?:\.[a-z0-9_]+)+$")
+    occurred_at: datetime
+    subject: str
+    data: dict[str, Any]
+
+
+class IntegrationEventBatch(StrictModel):
+    events: list[IntegrationEvent]
+    next_cursor: int = Field(ge=0)

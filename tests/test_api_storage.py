@@ -108,6 +108,20 @@ def test_strict_json_and_local_auth(config: BridgeConfig, manifest: dict) -> Non
             headers={"X-Bridge-Token": "status-secret"},
         )
         assert status.status_code == 200
+        assert client.get("/v1/events").status_code == 401
+        events = client.get(
+            "/v1/events",
+            headers={"X-Bridge-Token": "status-secret"},
+        )
+        assert events.status_code == 200
+        bad_cursor = client.get(
+            "/v1/events/stream",
+            headers={
+                "X-Bridge-Token": "status-secret",
+                "Last-Event-ID": "-1",
+            },
+        )
+        assert bad_cursor.status_code == 400
 
 
 def test_config_rejects_unprotected_network_listener(tmp_path) -> None:

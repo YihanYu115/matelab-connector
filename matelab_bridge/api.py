@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import getpass
 import hashlib
+import json
 import logging
 import mimetypes
 import re
@@ -32,7 +33,13 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import Field, SecretStr, ValidationError
 
 from . import __version__
@@ -47,13 +54,18 @@ from .errors import (
     NotebookNotFoundError,
     NotebookNotWritableError,
     NotebookSelectionIncompleteError,
+    RecordNotFoundError,
+    RecordNotWritableError,
 )
 from .matelab_client import MatelabClient
 from .models import (
     ArtifactReceipt,
     CaptureAccepted,
     CaptureEnvelope,
+    IntegrationEventBatch,
     RecentCandidate,
+    RecordDescriptionReceipt,
+    RecordDescriptionRequest,
     StrictModel,
     SyncReceipt,
     SyncState,
@@ -62,10 +74,11 @@ from .port_manager import NATIVE_CONSOLE_API_VERSION
 from .security import redact_text
 from .storage import BridgeStore
 from .sync_engine import SyncEngine, run_worker
-from .templates import select_template
+from .templates import build_description_update_payload, select_template
 
 ScopeName = Literal["submit", "status", "maintenance"]
 AUDIT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9]*(?:\.[a-z0-9_]+)+$")
 LOGGER = logging.getLogger("matelab_bridge.api")
 
 
@@ -305,6 +318,9 @@ def create_app(
             "notebook_not_writable": 403,
             "default_notebook_not_configured": 409,
             "notebook_selection_incomplete": 422,
+            "record_not_found": 404,
+            "record_not_writable": 409,
+            "idempotency_conflict": 409,
             "capture_identity_conflict": 409,
             "artifact_conflict": 409,
             "mapping_conflict": 409,
@@ -327,6 +343,9 @@ def create_app(
             "notebook_selection_incomplete": (
                 "notebook_id 和 notebook_name 必须同时提供, 或者同时省略以使用默认记录本。"
             ),
+            "record_not_found": "目标实验记录不存在于所选记录本中。",
+            "record_not_writable": "目标实验记录已定稿、签名或不可修改。",
+            "idempotency_conflict": "同一幂等键对应了不同的补充描述请求。",
             "capture_identity_conflict": "同一提交编号对应了不同内容。",
             "artifact_conflict": "附件状态或内容发生冲突。",
             "mapping_conflict": "本地记录与 MatElab 记录的映射发生冲突。",
@@ -349,6 +368,9 @@ def create_app(
                 "打开 Connector 的“手动提交”页面, 选择记录本并点击“设为 API 默认记录本”。"
             ),
             "notebook_selection_incomplete": "补齐记录本 ID 和名称, 或删除这两个字段。",
+            "record_not_found": "检查记录 UID 和记录本后重试。",
+            "record_not_writable": "在 MatElab 中确认记录状态; 不要自动覆盖已定稿内容。",
+            "idempotency_conflict": "为新描述使用新的 Idempotency-Key。",
             "capture_identity_conflict": (
                 "为不同内容使用新的 capture_id; 手动上传则改用新的 Idempotency-Key。"
             ),
@@ -589,9 +611,7 @@ def create_app(
                 "the selected notebook ID/name pair is not in the current MatElab list"
             )
         if not selected["editable"]:
-            raise NotebookNotWritableError(
-                "the selected MatElab notebook is public or read-only"
-            )
+            raise NotebookNotWritableError("the selected MatElab notebook is public or read-only")
         settings = DesktopSettings.load(config.data_dir, default_port=config.port)
         replace(
             settings,
@@ -930,6 +950,239 @@ def create_app(
     def api_default_notebook() -> dict[str, Any]:
         notebook = load_default_notebook()
         return {"configured": notebook is not None, "notebook": notebook}
+
+    @app.post(
+        "/v1/records/{record_uid}/descriptions",
+        response_model=RecordDescriptionReceipt,
+        status_code=201,
+        responses={
+            200: {
+                "model": RecordDescriptionReceipt,
+                "description": "An idempotent replay of an already acknowledged description.",
+            }
+        },
+        dependencies=[Depends(authorizer.dependency("submit"))],
+        tags=["records"],
+    )
+    async def add_record_description(
+        record_uid: str,
+        description: RecordDescriptionRequest,
+        idempotency_key: str | None = Header(default=None),
+    ) -> JSONResponse:
+        """Append a uniquely named rich-text description module to an existing record."""
+        record_uid = record_uid.strip()
+        if not AUDIT_ID_RE.fullmatch(record_uid):
+            raise HTTPException(
+                status_code=422,
+                detail="record_uid must be an opaque ASCII identifier",
+            )
+        notebook_id = (description.notebook_id or "").strip() or None
+        notebook_name = (description.notebook_name or "").strip() or None
+        if bool(notebook_id) != bool(notebook_name):
+            raise NotebookSelectionIncompleteError(
+                "notebook_id and notebook_name must be provided together"
+            )
+        if notebook_id is None or notebook_name is None:
+            default_notebook = load_default_notebook()
+            if default_notebook is None:
+                raise DefaultNotebookNotConfiguredError(
+                    "no default notebook is configured for API submissions"
+                )
+            notebook_id = default_notebook["id"]
+            notebook_name = default_notebook["name"]
+
+        key = idempotency_key or f"description-{uuid.uuid4()}"
+        if not AUDIT_ID_RE.fullmatch(key):
+            raise HTTPException(
+                status_code=400,
+                detail="Idempotency-Key must be an opaque ASCII identifier",
+            )
+        title = (description.title or "").strip() or None
+        request_fingerprint = sha256_tag(
+            canonical_json(
+                {
+                    "record_uid": record_uid,
+                    "notebook_id": notebook_id,
+                    "notebook_name": notebook_name,
+                    "title": title,
+                    "content": description.content,
+                }
+            )
+        )
+        identity_hash = hashlib.sha256(f"{record_uid}\0{key}".encode()).hexdigest()[:24]
+        description_id = f"desc-{identity_hash}"
+        label = f": {title[:80]}" if title else ""
+        module_name = f"Connector 补充说明{label} · {identity_hash}"
+        content_sha256 = sha256_tag(description.content.encode())
+        prior, duplicate = store.reserve_record_description(
+            description_id=description_id,
+            idempotency_key=key,
+            request_sha256=request_fingerprint,
+            record_uid=record_uid,
+            notebook_id=notebook_id,
+            notebook_name=notebook_name,
+            module_name=module_name,
+            content_sha256=content_sha256,
+        )
+        if prior is not None:
+            return JSONResponse(status_code=200, content=prior.model_dump(mode="json"))
+
+        try:
+            notebooks = await load_notebooks()
+            selected = next(
+                (
+                    notebook
+                    for notebook in notebooks
+                    if notebook["id"] == notebook_id and notebook["name"] == notebook_name
+                ),
+                None,
+            )
+            if selected is None:
+                raise NotebookNotFoundError(
+                    "the selected notebook ID/name pair is not in the current MatElab list"
+                )
+            if not selected["editable"]:
+                raise NotebookNotWritableError(
+                    "the selected MatElab notebook is public or read-only"
+                )
+            target_user = selected["user"]
+            items = await asyncio.to_thread(
+                matelab.items,
+                selected["name"],
+                user=target_user,
+            )
+            matches = [item for item in items if str(item.get("sn")) == record_uid]
+            if not matches:
+                raise RecordNotFoundError("record UID was not found in the selected notebook")
+            if len(matches) > 1:
+                raise MatelabContractError("MatElab returned duplicate records for one UID")
+            if bool(matches[0].get("locked")) or bool(matches[0].get("signed")):
+                raise RecordNotWritableError("locked or signed records cannot be updated safely")
+            payload = build_description_update_payload(
+                record_uid=record_uid,
+                notebook=selected["name"],
+                user=target_user,
+                module_name=module_name,
+                title=title,
+                content=description.content,
+            )
+            matelab_response = await asyncio.to_thread(matelab.update_record, payload)
+        except BridgeError as exc:
+            store.fail_record_description(
+                description_id,
+                error_code=exc.code,
+                message=str(exc),
+            )
+            raise
+
+        receipt = store.complete_record_description(
+            description_id,
+            owner_user=target_user,
+            matelab_response=matelab_response,
+            duplicate=duplicate,
+        )
+        return JSONResponse(
+            status_code=200 if duplicate else 201,
+            content=receipt.model_dump(mode="json"),
+        )
+
+    def checked_event_types(values: list[str] | None) -> set[str] | None:
+        if not values:
+            return None
+        event_types = {value.strip() for value in values if value.strip()}
+        if not event_types or any(not EVENT_TYPE_RE.fullmatch(value) for value in event_types):
+            raise HTTPException(status_code=400, detail="type contains an invalid event name")
+        return event_types
+
+    @app.get(
+        "/v1/events/stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "description": "A replayable Server-Sent Events stream.",
+                "content": {"text/event-stream": {"schema": {"type": "string"}}},
+            }
+        },
+        dependencies=[Depends(authorizer.dependency("status"))],
+        tags=["events"],
+    )
+    async def stream_events(
+        request: Request,
+        after: int = Query(default=0, ge=0),
+        event_type: Annotated[list[str] | None, Query(alias="type")] = None,
+        heartbeat_seconds: float = Query(default=15, ge=5, le=60),
+        last_event_id: str | None = Header(default=None),
+    ) -> StreamingResponse:
+        """Replay durable events after a cursor, then keep the SSE connection open."""
+        cursor = after
+        if last_event_id:
+            try:
+                resumed_cursor = int(last_event_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail="Last-Event-ID must be an integer cursor"
+                ) from exc
+            if resumed_cursor < 0:
+                raise HTTPException(status_code=400, detail="Last-Event-ID cannot be negative")
+            cursor = max(cursor, resumed_cursor)
+        event_types = checked_event_types(event_type)
+
+        async def generate() -> AsyncIterator[str]:
+            nonlocal cursor
+            loop = asyncio.get_running_loop()
+            last_output = loop.time()
+            while not await request.is_disconnected():
+                events = await asyncio.to_thread(
+                    store.list_integration_events,
+                    after=cursor,
+                    limit=100,
+                    event_types=event_types,
+                )
+                if events:
+                    for event in events:
+                        cursor = event.cursor
+                        payload = json.dumps(
+                            event.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        yield f"id: {event.cursor}\nevent: {event.type}\ndata: {payload}\n\n"
+                    last_output = loop.time()
+                    continue
+                if loop.time() - last_output >= heartbeat_seconds:
+                    yield ": heartbeat\n\n"
+                    last_output = loop.time()
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get(
+        "/v1/events",
+        response_model=IntegrationEventBatch,
+        dependencies=[Depends(authorizer.dependency("status"))],
+        tags=["events"],
+    )
+    def integration_events(
+        after: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+        event_type: Annotated[list[str] | None, Query(alias="type")] = None,
+    ) -> IntegrationEventBatch:
+        events = store.list_integration_events(
+            after=after,
+            limit=limit,
+            event_types=checked_event_types(event_type),
+        )
+        return IntegrationEventBatch(
+            events=events,
+            next_cursor=events[-1].cursor if events else after,
+        )
 
     @app.get("/healthz", tags=["operations"])
     def health() -> dict[str, str | int]:
