@@ -15,6 +15,8 @@ const elements = {
   logout: byId("logout-button"),
   notebook: byId("notebook"),
   refresh: byId("refresh-notebooks"),
+  notebookHelp: byId("notebook-help"),
+  matelabPortal: byId("matelab-portal"),
   recordForm: byId("record-form"),
   title: byId("record-title"),
   content: byId("record-content"),
@@ -131,29 +133,42 @@ function setAuthenticated(value, label = null) {
   elements.submit.disabled = !value || !elements.notebook.value;
   if (!value) {
     elements.notebook.innerHTML = '<option value="">请先登录 MatElab</option>';
+    elements.notebookHelp.textContent = "登录后会自动加载可写入的记录本。";
+    elements.notebookHelp.classList.remove("warning");
+    elements.matelabPortal.classList.add("hidden");
   }
 }
 
 function renderNotebooks(notebooks) {
   const previous = elements.notebook.value;
   elements.notebook.replaceChildren();
-  if (!notebooks.length) {
+  const writable = notebooks.filter((notebook) => notebook.editable);
+  if (!writable.length) {
     const option = document.createElement("option");
-    option.textContent = "没有可用记录本";
+    option.textContent = "当前账号没有可写入的记录本";
     option.value = "";
     elements.notebook.append(option);
-  } else {
-    notebooks.forEach((notebook) => {
-      const option = document.createElement("option");
-      option.value = notebook.id;
-      option.dataset.name = notebook.name;
-      option.textContent = `${notebook.name}${notebook.owner ? "" : " · 协作"}`;
-      elements.notebook.append(option);
-    });
+  }
+  notebooks.forEach((notebook) => {
+    const option = document.createElement("option");
+    const accessLabel = notebook.access === "my" ? "我的" :
+      notebook.access === "share" ? "共享" : notebook.access === "public" ? "公开" : "可访问";
+    option.value = notebook.id;
+    option.dataset.name = notebook.name;
+    option.disabled = !notebook.editable;
+    option.textContent = `${notebook.name} · ${accessLabel}${notebook.editable ? "" : " · 只读"}`;
+    elements.notebook.append(option);
+  });
+  if (writable.length) {
     if ([...elements.notebook.options].some((option) => option.value === previous)) {
       elements.notebook.value = previous;
     }
   }
+  elements.notebookHelp.textContent = writable.length ?
+    `已找到 ${writable.length} 个可写入记录本。` :
+    "登录成功，但当前账号没有自己的或可编辑的共享记录本。请先在 MatElab 创建记录本，或申请协作编辑权限。";
+  elements.notebookHelp.classList.toggle("warning", !writable.length);
+  elements.matelabPortal.classList.toggle("hidden", Boolean(writable.length));
   elements.submit.disabled = !authenticated || !elements.notebook.value;
 }
 

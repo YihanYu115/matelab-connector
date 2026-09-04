@@ -37,7 +37,12 @@ from pydantic import Field, SecretStr, ValidationError
 from .artifact_ingress import ArtifactIngressService
 from .canonical import canonical_json, sha256_tag, strict_json_loads
 from .config import BridgeConfig
-from .errors import BridgeError, MatelabContractError, NotebookNotFoundError
+from .errors import (
+    BridgeError,
+    MatelabContractError,
+    NotebookNotFoundError,
+    NotebookNotWritableError,
+)
 from .matelab_client import MatelabClient
 from .models import (
     ArtifactReceipt,
@@ -89,32 +94,56 @@ def _problem(
 
 
 def _normalize_notebooks(result: dict[str, Any]) -> list[dict[str, Any]]:
-    raw: Any = result.get("items") or result.get("elns") or result.get("data") or []
-    if isinstance(raw, dict):
-        raw = [raw]
-    if not isinstance(raw, list):
-        raise ValueError("MatElab 记录本列表不是数组")
+    grouped = any(group in result for group in ("my", "share", "public"))
+    candidates: list[tuple[dict[str, Any], str]] = []
+    if grouped:
+        for group in ("my", "share", "public"):
+            raw_group = result.get(group, [])
+            if isinstance(raw_group, dict):
+                raw_group = [raw_group]
+            if not isinstance(raw_group, list):
+                raise ValueError(f"MatElab {group} 记录本列表不是数组")
+            candidates.extend((item, group) for item in raw_group if isinstance(item, dict))
+    else:
+        raw: Any = result.get("items") or result.get("elns") or result.get("data") or []
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list):
+            raise ValueError("MatElab 记录本列表不是数组")
+        candidates.extend((item, "accessible") for item in raw if isinstance(item, dict))
     normalized: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
+    for item, access in candidates:
         name = str(item.get("showtext") or item.get("name") or item.get("title") or "").strip()
         notebook_id = str(item.get("sn") or item.get("id") or "").strip()
         if not name or not notebook_id:
             continue
-        owner_value = item.get("owner", True)
-        owner = owner_value is True or str(owner_value).lower() in {"1", "true", "yes"}
+        owner_value = item.get("owner", access == "my")
+        owner = (
+            access == "my"
+            or owner_value is True
+            or str(owner_value).lower()
+            in {
+                "1",
+                "true",
+                "yes",
+            }
+        )
         user_value = item.get("user") or item.get("username") or item.get("trans_username")
+        target_user = None if owner or not user_value else str(user_value)
+        editable = access != "public" and (owner or access == "accessible" or bool(target_user))
         normalized.append(
             {
                 "id": notebook_id,
                 "name": name,
                 "server": str(item.get("server") or ""),
                 "owner": owner,
-                "user": None if owner or not user_value else str(user_value),
+                "user": target_user,
+                "access": access,
+                "editable": editable,
             }
         )
-    normalized.sort(key=lambda item: (not item["owner"], item["name"].casefold()))
+    access_order = {"my": 0, "accessible": 1, "share": 2, "public": 3}
+    normalized.sort(key=lambda item: (access_order.get(item["access"], 9), item["name"].casefold()))
     return normalized
 
 
@@ -242,6 +271,7 @@ def create_app(
             "capture_not_found": 404,
             "artifact_not_found": 404,
             "notebook_not_found": 404,
+            "notebook_not_writable": 403,
             "capture_identity_conflict": 409,
             "artifact_conflict": 409,
             "mapping_conflict": 409,
@@ -259,6 +289,7 @@ def create_app(
             "capture_not_found": "找不到这条本地提交记录。",
             "artifact_not_found": "找不到声明的附件。",
             "notebook_not_found": "所选记录本已不存在或当前账号无权访问。",
+            "notebook_not_writable": "所选记录本是只读记录本, 不能上传记录。",
             "capture_identity_conflict": "同一提交编号对应了不同内容。",
             "artifact_conflict": "附件状态或内容发生冲突。",
             "mapping_conflict": "本地记录与 MatElab 记录的映射发生冲突。",
@@ -276,6 +307,7 @@ def create_app(
             "capture_not_found": "检查提交编号后重试。",
             "artifact_not_found": "检查附件编号是否与清单一致。",
             "notebook_not_found": "刷新记录本列表并重新选择。",
+            "notebook_not_writable": "选择“我的”记录本, 或请记录本所有者授予编辑权限。",
             "capture_identity_conflict": "为不同内容使用新的 capture_id。",
             "artifact_conflict": "检查附件后重新创建提交。",
             "mapping_conflict": "停止重试并运行诊断, 避免覆盖远端记录。",
@@ -396,8 +428,6 @@ def create_app(
             notebooks = _normalize_notebooks(result)
         except ValueError as exc:
             raise MatelabContractError(str(exc)) from exc
-        if not notebooks:
-            raise MatelabContractError("MatElab 没有返回任何带稳定 ID 的可访问记录本")
         return notebooks
 
     @app.get("/", include_in_schema=False)
@@ -526,6 +556,8 @@ def create_app(
             raise NotebookNotFoundError(
                 "the selected notebook ID/name pair is not in the current MatElab list"
             )
+        if not selected["editable"]:
+            raise NotebookNotWritableError("the selected MatElab notebook is public or read-only")
         selected_files = attachments or []
         if len(selected_files) > 64:
             raise HTTPException(status_code=413, detail="一次最多上传 64 个附件。")

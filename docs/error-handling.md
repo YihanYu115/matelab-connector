@@ -36,6 +36,7 @@ GUI 和本地 HTTP API 的失败响应使用同一结构：
 | 403 | `http_error` | GUI 会话校验失败 | 刷新 GUI 后重新操作 |
 | 404 | `capture_not_found` | 本机没有该提交编号 | 检查 `capture_id` |
 | 404 | `notebook_not_found` | 记录本被改名、删除或权限已变化 | 刷新记录本并重新选择；不得猜测或回退到默认记录本 |
+| 403 | `notebook_not_writable` | 选择了公开或只读记录本 | 选择自己的记录本，或申请共享记录本的编辑权限 |
 | 409 | `capture_identity_conflict` | 同一 `capture_id` 对应不同内容 | 为新内容生成新的 `capture_id` |
 | 409 | `artifact_conflict` | 附件策略或状态冲突 | 核对 manifest 与附件编号 |
 | 409 | `invalid_state` | 当前同步状态不接受该操作 | 先查询回执；失败任务使用维护重试接口 |

@@ -48,16 +48,17 @@ class GuiMatelab:
             raise MatelabAuthRequiredError("not logged in")
         return {
             "code": 0,
-            "items": [
+            "my": [{"showtext": "我的记录本", "id": 21, "owner": True, "server": "main"}],
+            "share": [
                 {
                     "showtext": "协作记录本",
                     "sn": "book-shared",
                     "owner": False,
                     "trans_username": "owner@example.test",
                     "server": "main",
-                },
-                {"showtext": "我的记录本", "sn": "book-mine", "owner": True, "server": "main"},
+                }
             ],
+            "public": [{"showtext": "公开示例", "id": 99, "owner": False, "server": "main"}],
         }
 
     def close(self) -> None:
@@ -104,13 +105,27 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
         assert [item["name"] for item in logged_in.json()["notebooks"]] == [
             "我的记录本",
             "协作记录本",
+            "公开示例",
         ]
+        assert logged_in.json()["notebooks"][0]["id"] == "21"
+        assert logged_in.json()["notebooks"][2]["editable"] is False
+        public_denied = client.post(
+            "/v1/manual-submissions",
+            data={
+                "title": "public note",
+                "content": "must not be written",
+                "notebook_id": "99",
+                "notebook_name": "公开示例",
+            },
+        )
+        assert public_denied.status_code == 403
+        assert public_denied.json()["error"]["code"] == "notebook_not_writable"
         api_submission = client.post(
             "/v1/manual-submissions",
             data={
                 "title": "API note",
                 "content": "submitted by another local program",
-                "notebook_id": "book-mine",
+                "notebook_id": "21",
                 "notebook_name": "我的记录本",
             },
         )
@@ -125,7 +140,7 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
             data={
                 "title": "title",
                 "content": "body",
-                "notebook_id": "book-mine",
+                "notebook_id": "21",
                 "notebook_name": "renamed",
             },
         )
@@ -138,7 +153,7 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
             data={
                 "title": "低温系统检查",
                 "content": "真空正常, 开始降温。",
-                "notebook_id": "book-mine",
+                "notebook_id": "21",
                 "notebook_name": "我的记录本",
                 "actor_id": "operator",
             },
@@ -149,7 +164,7 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
         assert submitted.json()["state"] == "ready"
         assert submitted.headers["X-Request-ID"] == "gui-request-1"
         manifest = store.get_manifest(capture_id)
-        assert manifest.routing_hints["target_notebook_id"] == "book-mine"
+        assert manifest.routing_hints["target_notebook_id"] == "21"
         assert manifest.extensions["quick_note"]["title"] == "低温系统检查"
         artifact = store.get_artifact_row(capture_id, "attachment-001")
         assert artifact["received_sha256"] == hashlib.sha256(b"trace-data").hexdigest()

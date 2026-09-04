@@ -50,6 +50,10 @@ class NotebookNotFoundError(BridgeError):
     code = "notebook_not_found"
 
 
+class NotebookNotWritableError(BridgeError):
+    code = "notebook_not_writable"
+
+
 class MappingConflictError(BridgeError):
     code = "mapping_conflict"
 

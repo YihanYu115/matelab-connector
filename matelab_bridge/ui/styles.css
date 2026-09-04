@@ -210,6 +210,10 @@ button, .secondary-button { font-family: inherit; }
 .grow { flex: 1; }
 .square-button { flex: 0 0 46px; height: 46px; border: 1px solid var(--line); border-radius: 12px; color: var(--green); background: rgba(255, 255, 255, 0.72); cursor: pointer; font-size: 21px; }
 .square-button:hover:not(:disabled) { background: #fff; }
+.notebook-help { margin: -8px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.notebook-help.warning { color: var(--red); font-weight: 700; }
+.notebook-portal { margin: -11px 2px 0; color: var(--green); font-size: 11px; font-weight: 800; text-decoration: none; }
+.notebook-portal:hover { text-decoration: underline; }
 
 .drop-zone { display: grid; min-height: 132px; place-items: center; align-content: center; border: 1.5px dashed rgba(23, 107, 75, 0.34); border-radius: 16px; background: rgba(220, 238, 229, 0.35); cursor: pointer; text-align: center; transition: 150ms; }
 .drop-zone:hover, .drop-zone.dragging, .drop-zone:focus { border-color: var(--green); background: rgba(220, 238, 229, 0.72); outline: none; }
