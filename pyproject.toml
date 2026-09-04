@@ -21,6 +21,11 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1",
 ]
 
+[project.urls]
+Documentation = "https://github.com/YihanYu115/matelab-connector#readme"
+Issues = "https://github.com/YihanYu115/matelab-connector/issues"
+Source = "https://github.com/YihanYu115/matelab-connector"
+
 [project.optional-dependencies]
 dev = [
   "mypy>=1.11,<2",

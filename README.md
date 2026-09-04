@@ -13,6 +13,9 @@
 
 ## 直接使用原生应用（推荐）
 
+请从 [GitHub Releases](https://github.com/YihanYu115/matelab-connector/releases/latest)
+下载与你的系统对应的压缩包。普通用户不需要下载仓库源码。
+
 普通用户只需要下载对应系统的发布包：
 
 - Windows: 解压后双击 `MatElabConnector.exe`；
