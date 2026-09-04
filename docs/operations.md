@@ -29,6 +29,10 @@ For a hardened Windows deployment, run the command from a dedicated unprivileged
 
 The same `capture_id` and canonical payload returns the original `sync_id`. Reusing the ID with a different payload returns HTTP 409.
 
+For the simpler multipart `POST /v1/manual-submissions` endpoint, generate one opaque ASCII `Idempotency-Key` (maximum 128 characters) per logical note. Reuse it when retrying after a timeout. The same key plus identical fields and attachment bytes returns the original `capture_id` and `"duplicate": true`, even if MatElab is temporarily unavailable; reusing the key with changed data returns HTTP 409. Omitting the header intentionally creates a new note on every request.
+
+The native application holds a per-user data-directory process lock. A second launch reports that the Connector is already running and exits instead of attaching its window to another process's API lifetime.
+
 The checked-in machine contract is `docs/openapi.json`. Regenerate it after API changes with `.\.venv\Scripts\python.exe tools\generate_openapi.py`.
 
 ## Recovery and maintenance

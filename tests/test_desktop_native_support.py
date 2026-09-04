@@ -64,3 +64,43 @@ def test_native_client_session_notebooks_tasks_and_problem(tmp_path: Path) -> No
             assert exc.problem["action"] == "重新登录"
         else:
             raise AssertionError("logout should surface the structured API problem")
+
+
+def test_native_client_manual_submission_sends_reusable_idempotency_key(
+    tmp_path: Path,
+) -> None:
+    seen_keys: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ui":
+            return httpx.Response(
+                200,
+                text='<meta name="bridge-csrf" content="native-test-token">',
+            )
+        if request.url.path == "/v1/manual-submissions":
+            seen_keys.append(request.headers.get("Idempotency-Key"))
+            return httpx.Response(
+                202,
+                json={"capture_id": "manual-1", "sync_id": "sync-1", "state": "ready"},
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    attachment = tmp_path / "trace.txt"
+    attachment.write_text("trace", encoding="utf-8")
+    config = BridgeConfig(data_dir=tmp_path)
+    with NativeConnectorClient(
+        "http://connector.test",
+        config,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        for _ in range(2):
+            client.submit_note(
+                notebook={"id": "21", "name": "测试本"},
+                title="测试",
+                content="正文",
+                actor_id=None,
+                attachments=[attachment],
+                idempotency_key="desktop-submit-001",
+            )
+
+    assert seen_keys == ["desktop-submit-001", "desktop-submit-001"]

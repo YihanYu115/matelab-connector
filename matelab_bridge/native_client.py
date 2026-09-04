@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 import re
+import uuid
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
@@ -140,6 +141,7 @@ class NativeConnectorClient:
         content: str,
         actor_id: str | None,
         attachments: list[Path],
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         data = {
             "notebook_id": str(notebook["id"]),
@@ -149,6 +151,8 @@ class NativeConnectorClient:
         }
         if actor_id:
             data["actor_id"] = actor_id
+        headers = self._headers("submit")
+        headers["Idempotency-Key"] = idempotency_key or f"native-{uuid.uuid4()}"
         with ExitStack() as stack:
             upload_files = [
                 (
@@ -164,7 +168,7 @@ class NativeConnectorClient:
             value = self._result(
                 self.http.post(
                     "/v1/manual-submissions",
-                    headers=self._headers("submit"),
+                    headers=headers,
                     data=data,
                     files=upload_files,
                 )

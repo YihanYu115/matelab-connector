@@ -26,7 +26,7 @@
 
 ## HTTP 状态与处理动作
 
-其他本地程序若只需上传标题、正文和附件，可调用 `POST /v1/manual-submissions`；需要完整实验语义和幂等控制时使用三步 Capture API。
+其他本地程序若只需上传标题、正文和附件，可调用 `POST /v1/manual-submissions`。为每次逻辑提交生成一个 `Idempotency-Key`，网络超时重试时复用原值，即可获得幂等控制；需要完整实验语义时使用三步 Capture API。
 
 | HTTP | `code` | 含义 | 规定动作 |
 | --- | --- | --- | --- |
@@ -37,7 +37,7 @@
 | 404 | `capture_not_found` | 本机没有该提交编号 | 检查 `capture_id` |
 | 404 | `notebook_not_found` | 记录本被改名、删除或权限已变化 | 刷新记录本并重新选择；不得猜测或回退到默认记录本 |
 | 403 | `notebook_not_writable` | 选择了公开或只读记录本 | 选择自己的记录本，或申请共享记录本的编辑权限 |
-| 409 | `capture_identity_conflict` | 同一 `capture_id` 对应不同内容 | 为新内容生成新的 `capture_id` |
+| 409 | `capture_identity_conflict` | 同一 `capture_id` 或 `Idempotency-Key` 对应不同内容 | 为新内容生成新的编号；重试原操作时保持内容不变 |
 | 409 | `artifact_conflict` | 附件策略或状态冲突 | 核对 manifest 与附件编号 |
 | 409 | `invalid_state` | 当前同步状态不接受该操作 | 先查询回执；失败任务使用维护重试接口 |
 | 409 | `matelab_conflict` | 远端 UID、导出内容或附件哈希不一致 | 停止自动覆盖，人工检查 MatElab 记录 |
@@ -65,6 +65,7 @@
 
 | 场景 | 控制台行为 | 用户动作 |
 | --- | --- | --- |
+| 重复打开原生 Connector | 第二个进程显示“已经在运行”并退出，不会借用第一个进程的 API | 返回已打开的窗口继续使用；若窗口异常消失，再从任务管理器结束旧进程 |
 | 设定端口被 Manager 等程序占用 | 在设定端口之后最多探测 19 个端口，使用第一个空闲端口并显示实际 API 地址 | 通常无需处理；需要固定端口时在“API 设置”修改 |
 | 检测到旧版 Connector | 拒绝并行启动第二个同步 Worker，登录页显示旧实例所在端口 | 关闭旧窗口或旧 CMD，再启动新版应用 |
 | 20 个候选端口都不可用 | 不进入功能控制台，显示启动失败和建议 | 释放端口或修改 `desktop-settings.json` 后重启 |

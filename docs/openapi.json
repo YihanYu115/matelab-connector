@@ -507,7 +507,7 @@
   "info": {
     "description": "Durable local Capture Envelope submission gateway",
     "title": "MatElab Desktop Bridge",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1344,6 +1344,22 @@
         "parameters": [
           {
             "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
             "name": "x-bridge-token",
             "required": false,
             "schema": {
@@ -1573,6 +1589,22 @@
       "post": {
         "operationId": "ui_manual_submission_v1_ui_manual_submissions_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
           {
             "in": "header",
             "name": "x-bridge-ui-csrf",

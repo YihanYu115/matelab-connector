@@ -175,6 +175,16 @@ class BridgeStore:
                     FOREIGN KEY (capture_id) REFERENCES captures(capture_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS manual_submission_idempotency (
+                    operation TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_sha256 TEXT NOT NULL,
+                    capture_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (operation, idempotency_key),
+                    FOREIGN KEY (capture_id) REFERENCES captures(capture_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_captures_state_next
                     ON captures(state, next_attempt_at, created_at);
                 CREATE INDEX IF NOT EXISTS idx_captures_recent
@@ -185,6 +195,8 @@ class BridgeStore:
                     ON journal(capture_id, seq);
                 CREATE INDEX IF NOT EXISTS idx_request_audit_capture
                     ON request_audit(capture_id, seq);
+                CREATE INDEX IF NOT EXISTS idx_manual_submission_capture
+                    ON manual_submission_idempotency(capture_id);
 
                 CREATE TRIGGER IF NOT EXISTS journal_prevent_update
                 BEFORE UPDATE ON journal
@@ -210,84 +222,176 @@ class BridgeStore:
         template_version: str,
         template_sha256: str,
     ) -> tuple[SyncReceipt, bool]:
+        with self.connect() as connection, connection:
+            return self._create_capture_in_connection(
+                connection,
+                envelope,
+                manifest_json,
+                manifest_sha256,
+                template_id=template_id,
+                template_version=template_version,
+                template_sha256=template_sha256,
+            )
+
+    def create_manual_capture(
+        self,
+        envelope: CaptureEnvelope,
+        manifest_json: bytes,
+        manifest_sha256: str,
+        *,
+        template_id: str,
+        template_version: str,
+        template_sha256: str,
+        operation: str,
+        idempotency_key: str,
+        request_sha256: str,
+    ) -> tuple[SyncReceipt, bool]:
+        """Atomically bind one manual-submission key to exactly one capture."""
+        with self.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT request_sha256, capture_id
+                FROM manual_submission_idempotency
+                WHERE operation=? AND idempotency_key=?
+                """,
+                (operation, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                if existing["request_sha256"] != request_sha256:
+                    raise CaptureConflictError(
+                        "Idempotency-Key was already used for a different manual submission"
+                    )
+                return self._receipt_in_connection(connection, str(existing["capture_id"])), True
+
+            receipt, duplicate = self._create_capture_in_connection(
+                connection,
+                envelope,
+                manifest_json,
+                manifest_sha256,
+                template_id=template_id,
+                template_version=template_version,
+                template_sha256=template_sha256,
+            )
+            connection.execute(
+                """
+                INSERT INTO manual_submission_idempotency (
+                    operation, idempotency_key, request_sha256, capture_id, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (operation, idempotency_key, request_sha256, envelope.capture_id, iso_now()),
+            )
+            return receipt, duplicate
+
+    def find_manual_capture(
+        self, *, operation: str, idempotency_key: str, request_sha256: str
+    ) -> SyncReceipt | None:
+        """Return a prior matching manual submission, or reject key reuse."""
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT request_sha256, capture_id
+                FROM manual_submission_idempotency
+                WHERE operation=? AND idempotency_key=?
+                """,
+                (operation, idempotency_key),
+            ).fetchone()
+            if existing is None:
+                return None
+            if existing["request_sha256"] != request_sha256:
+                raise CaptureConflictError(
+                    "Idempotency-Key was already used for a different manual submission"
+                )
+            return self._receipt_in_connection(connection, str(existing["capture_id"]))
+
+    def _create_capture_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        envelope: CaptureEnvelope,
+        manifest_json: bytes,
+        manifest_sha256: str,
+        *,
+        template_id: str,
+        template_version: str,
+        template_sha256: str,
+    ) -> tuple[SyncReceipt, bool]:
+        existing = connection.execute(
+            "SELECT manifest_sha256 FROM captures WHERE capture_id=?", (envelope.capture_id,)
+        ).fetchone()
+        if existing:
+            if existing["manifest_sha256"] != manifest_sha256:
+                raise CaptureConflictError(
+                    "capture_id already exists with a different canonical payload"
+                )
+            return self._receipt_in_connection(connection, envelope.capture_id), True
+
         now = iso_now()
         source_locator = envelope.source.locator if envelope.source else None
         source_hash = envelope.source.content_hash if envelope.source else None
-        with self.connect() as connection, connection:
-            existing = connection.execute(
-                "SELECT manifest_sha256 FROM captures WHERE capture_id=?", (envelope.capture_id,)
-            ).fetchone()
-            if existing:
-                if existing["manifest_sha256"] != manifest_sha256:
-                    raise CaptureConflictError(
-                        "capture_id already exists with a different canonical payload"
-                    )
-                return self._receipt_in_connection(connection, envelope.capture_id), True
-
-            sync_id = f"sync-{uuid.uuid4()}"
+        sync_id = f"sync-{uuid.uuid4()}"
+        connection.execute(
+            """
+            INSERT INTO captures (
+                capture_id, sync_id, manifest_json, manifest_sha256, capture_kind,
+                state, record_uid, template_id, template_version, template_sha256,
+                occurred_at, received_at, created_at, updated_at, producer_kind,
+                producer_id, actor_id, run_id, source_locator, source_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                envelope.capture_id,
+                sync_id,
+                manifest_json.decode("utf-8"),
+                manifest_sha256,
+                envelope.capture_kind.value,
+                SyncState.RECEIVING.value,
+                deterministic_record_uid(envelope.capture_id),
+                template_id,
+                template_version,
+                template_sha256,
+                envelope.occurred_at.isoformat(),
+                now,
+                now,
+                now,
+                envelope.producer.kind,
+                envelope.producer.producer_id,
+                envelope.producer.actor_id,
+                envelope.producer.run_id,
+                source_locator,
+                source_hash,
+            ),
+        )
+        for artifact in envelope.artifacts:
+            state = "declared" if artifact.ingress.mode == "stream" else "manifest_only"
             connection.execute(
                 """
-                INSERT INTO captures (
-                    capture_id, sync_id, manifest_json, manifest_sha256, capture_kind,
-                    state, record_uid, template_id, template_version, template_sha256,
-                    occurred_at, received_at, created_at, updated_at, producer_kind,
-                    producer_id, actor_id, run_id, source_locator, source_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO artifacts (
+                    capture_id, artifact_id, descriptor_json, expected_size,
+                    expected_sha256, required, transfer_policy, state, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     envelope.capture_id,
-                    sync_id,
-                    manifest_json.decode("utf-8"),
-                    manifest_sha256,
-                    envelope.capture_kind.value,
-                    SyncState.RECEIVING.value,
-                    deterministic_record_uid(envelope.capture_id),
-                    template_id,
-                    template_version,
-                    template_sha256,
-                    envelope.occurred_at.isoformat(),
+                    artifact.artifact_id,
+                    artifact.model_dump_json(),
+                    artifact.size,
+                    artifact.sha256.lower(),
+                    int(artifact.required),
+                    artifact.transfer_policy,
+                    state,
                     now,
                     now,
-                    now,
-                    envelope.producer.kind,
-                    envelope.producer.producer_id,
-                    envelope.producer.actor_id,
-                    envelope.producer.run_id,
-                    source_locator,
-                    source_hash,
                 ),
             )
-            for artifact in envelope.artifacts:
-                state = "declared" if artifact.ingress.mode == "stream" else "manifest_only"
-                connection.execute(
-                    """
-                    INSERT INTO artifacts (
-                        capture_id, artifact_id, descriptor_json, expected_size,
-                        expected_sha256, required, transfer_policy, state, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        envelope.capture_id,
-                        artifact.artifact_id,
-                        artifact.model_dump_json(),
-                        artifact.size,
-                        artifact.sha256.lower(),
-                        int(artifact.required),
-                        artifact.transfer_policy,
-                        state,
-                        now,
-                        now,
-                    ),
-                )
-            self._append_journal(
-                connection,
-                envelope.capture_id,
-                "capture_persisted",
-                None,
-                SyncState.RECEIVING,
-                {"manifest_sha256": manifest_sha256, "artifact_count": len(envelope.artifacts)},
-            )
-            return self._receipt_in_connection(connection, envelope.capture_id), False
+        self._append_journal(
+            connection,
+            envelope.capture_id,
+            "capture_persisted",
+            None,
+            SyncState.RECEIVING,
+            {"manifest_sha256": manifest_sha256, "artifact_count": len(envelope.artifacts)},
+        )
+        return self._receipt_in_connection(connection, envelope.capture_id), False
 
     def get_capture_row(self, capture_id: str) -> sqlite3.Row:
         with self.connect() as connection:

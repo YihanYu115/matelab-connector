@@ -140,6 +140,40 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
         assert tasks.status_code == 200
         assert tasks.json()[0]["capture_id"] == api_submission.json()["capture_id"]
 
+        idempotent_data = {
+            "title": "retry-safe API note",
+            "content": "the same HTTP operation may be retried",
+            "notebook_id": "21",
+            "notebook_name": "我的记录本",
+        }
+        idempotent_headers = {"Idempotency-Key": "manual-operation-001"}
+        first_attempt = client.post(
+            "/v1/manual-submissions",
+            headers=idempotent_headers,
+            data=idempotent_data,
+            files={"attachments": ("trace.txt", b"retry-safe", "text/plain")},
+        )
+        repeated_attempt = client.post(
+            "/v1/manual-submissions",
+            headers=idempotent_headers,
+            data=idempotent_data,
+            files={"attachments": ("trace.txt", b"retry-safe", "text/plain")},
+        )
+        assert first_attempt.status_code == 202
+        assert first_attempt.json()["duplicate"] is False
+        assert repeated_attempt.status_code == 202
+        assert repeated_attempt.json()["duplicate"] is True
+        assert repeated_attempt.json()["capture_id"] == first_attempt.json()["capture_id"]
+        assert repeated_attempt.json()["sync_id"] == first_attempt.json()["sync_id"]
+        changed_attempt = client.post(
+            "/v1/manual-submissions",
+            headers=idempotent_headers,
+            data={**idempotent_data, "content": "different content"},
+            files={"attachments": ("trace.txt", b"retry-safe", "text/plain")},
+        )
+        assert changed_attempt.status_code == 409
+        assert changed_attempt.json()["error"]["code"] == "capture_identity_conflict"
+
         mismatch = client.post(
             "/v1/ui/manual-submissions",
             headers=headers,
@@ -179,6 +213,15 @@ def test_gui_login_notebook_selection_and_manual_ingress(config: BridgeConfig) -
 
         logged_out = client.post("/v1/ui/logout", headers=headers)
         assert logged_out.json()["session"]["authenticated"] is False
+        replay_while_logged_out = client.post(
+            "/v1/manual-submissions",
+            headers=idempotent_headers,
+            data=idempotent_data,
+            files={"attachments": ("trace.txt", b"retry-safe", "text/plain")},
+        )
+        assert replay_while_logged_out.status_code == 202
+        assert replay_while_logged_out.json()["capture_id"] == first_attempt.json()["capture_id"]
+        assert replay_while_logged_out.json()["duplicate"] is True
         store.mark_attention(
             capture_id,
             SyncState.AUTH_REQUIRED,

@@ -23,7 +23,7 @@ from typing import Any, TypeVar
 
 from .config import BridgeConfig
 from .desktop_settings import DesktopSettings
-from .embedded_service import EmbeddedBridgeService
+from .embedded_service import ConnectorAlreadyRunningError, EmbeddedBridgeService
 from .native_client import ConnectorApiError, NativeConnectorClient
 
 MATELAB_PORTAL_URL = "https://matelab.iphy.ac.cn/eln/"
@@ -121,7 +121,7 @@ class NativeConnectorApp:
         for page in (self.login_page, self.console_page):
             page.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.show_login()
-        self._run(self._start_service, self._service_ready, self.login_page.set_error)
+        self._run(self._start_service, self._service_ready, self._service_start_failed)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -166,6 +166,13 @@ class NativeConnectorApp:
             )
         else:
             self.login_page.set_status("Connector API 已就绪，请登录 MatElab")
+
+    def _service_start_failed(self, exc: BaseException) -> None:
+        if isinstance(exc, ConnectorAlreadyRunningError):
+            messagebox.showinfo("MatElab Connector 已在运行", str(exc), parent=self.root)
+            self.close()
+            return
+        self.login_page.set_error(exc)
 
     def _resume_console(self, notebooks: list[dict[str, Any]]) -> None:
         self.console_page.activate(notebooks)

@@ -52,6 +52,7 @@ from .models import (
     RecentCandidate,
     StrictModel,
     SyncReceipt,
+    SyncState,
 )
 from .port_manager import NATIVE_CONSOLE_API_VERSION
 from .security import redact_text
@@ -217,6 +218,7 @@ def create_app(
     authorizer = LocalAuthorizer(config)
     stop_event = asyncio.Event()
     wake_event = asyncio.Event()
+    manual_submission_lock = asyncio.Lock()
     worker_task: asyncio.Task[None] | None = None
 
     @asynccontextmanager
@@ -310,7 +312,9 @@ def create_app(
             "artifact_not_found": "检查附件编号是否与清单一致。",
             "notebook_not_found": "刷新记录本列表并重新选择。",
             "notebook_not_writable": "选择“我的”记录本, 或请记录本所有者授予编辑权限。",
-            "capture_identity_conflict": "为不同内容使用新的 capture_id。",
+            "capture_identity_conflict": (
+                "为不同内容使用新的 capture_id; 手动上传则改用新的 Idempotency-Key。"
+            ),
             "artifact_conflict": "检查附件后重新创建提交。",
             "mapping_conflict": "停止重试并运行诊断, 避免覆盖远端记录。",
             "matelab_conflict": "在 MatElab 中检查同 UID 记录和附件后再处理。",
@@ -544,22 +548,13 @@ def create_app(
         operation: str,
         producer_kind: str,
         status_prefix: str,
+        idempotency_key: str | None,
     ) -> dict[str, Any]:
-        notebooks = await load_notebooks()
-        selected = next(
-            (
-                notebook
-                for notebook in notebooks
-                if notebook["id"] == notebook_id and notebook["name"] == notebook_name
-            ),
-            None,
-        )
-        if selected is None:
-            raise NotebookNotFoundError(
-                "the selected notebook ID/name pair is not in the current MatElab list"
+        if idempotency_key is not None and not AUDIT_ID_RE.fullmatch(idempotency_key):
+            raise HTTPException(
+                status_code=400,
+                detail="Idempotency-Key must be an opaque ASCII identifier",
             )
-        if not selected["editable"]:
-            raise NotebookNotWritableError("the selected MatElab notebook is public or read-only")
         selected_files = attachments or []
         if len(selected_files) > 64:
             raise HTTPException(status_code=413, detail="一次最多上传 64 个附件。")
@@ -598,67 +593,166 @@ def create_app(
                     "required": True,
                 }
             )
-        capture_id = f"manual-{uuid.uuid4()}"
-        envelope = CaptureEnvelope.model_validate(
-            {
-                "schema": "capture-envelope/v1",
-                "capture_id": capture_id,
-                "capture_kind": "field_note",
-                "occurred_at": datetime.now(UTC).isoformat(),
-                "producer": {
-                    "kind": producer_kind,
-                    "producer_id": socket.gethostname(),
-                    "actor_id": (actor_id or getpass.getuser()).strip(),
-                    "run_id": None,
-                },
-                "scope": {},
-                "source": None,
-                "execution": None,
-                "summary": {"observations": [content]},
-                "artifacts": artifact_specs,
-                "routing_hints": {
-                    "creation_mode": "create_update",
-                    "target_notebook": selected["name"],
-                    "target_notebook_id": selected["id"],
-                    "target_user": selected["user"],
-                },
-                "extensions": {
-                    "quick_note": {
-                        "title": title.strip(),
-                        "original_text": content,
-                        "human_confirmed": True,
+        effective_actor = (actor_id or getpass.getuser()).strip()
+        request_fingerprint = sha256_tag(
+            canonical_json(
+                {
+                    "title": title.strip(),
+                    "content": content,
+                    "notebook_id": notebook_id,
+                    "notebook_name": notebook_name,
+                    "actor_id": effective_actor,
+                    "attachments": [
+                        {
+                            "artifact_id": item["artifact_id"],
+                            "filename": item["filename"],
+                            "mime_type": item["mime_type"],
+                            "size": item["size"],
+                            "sha256": item["sha256"],
+                        }
+                        for item in artifact_specs
+                    ],
+                }
+            )
+        )
+        async with manual_submission_lock:
+            if idempotency_key is not None:
+                prior = store.find_manual_capture(
+                    operation=operation,
+                    idempotency_key=idempotency_key,
+                    request_sha256=request_fingerprint,
+                )
+                if prior is not None:
+                    request_id, key = _audit_ids(
+                        prior.capture_id,
+                        request.headers.get("X-Request-ID"),
+                        idempotency_key,
+                    )
+                    store.record_request(
+                        prior.capture_id,
+                        operation=operation,
+                        request_id=request_id,
+                        idempotency_key=key,
+                    )
+                    if prior.state == SyncState.RECEIVING:
+                        for index, upload in enumerate(selected_files, start=1):
+                            await ingress.receive(
+                                prior.capture_id,
+                                f"attachment-{index:03d}",
+                                upload_stream(upload),
+                            )
+                        prior = store.commit_capture(prior.capture_id)
+                        wake_event.set()
+                    return {
+                        "capture_id": prior.capture_id,
+                        "sync_id": prior.sync_id,
+                        "state": prior.state.value,
+                        "status_url": f"{status_prefix}/{prior.capture_id}",
+                        "duplicate": True,
                     }
-                },
+
+            notebooks = await load_notebooks()
+            selected = next(
+                (
+                    notebook
+                    for notebook in notebooks
+                    if notebook["id"] == notebook_id and notebook["name"] == notebook_name
+                ),
+                None,
+            )
+            if selected is None:
+                raise NotebookNotFoundError(
+                    "the selected notebook ID/name pair is not in the current MatElab list"
+                )
+            if not selected["editable"]:
+                raise NotebookNotWritableError(
+                    "the selected MatElab notebook is public or read-only"
+                )
+
+            capture_id = f"manual-{uuid.uuid4()}"
+            envelope = CaptureEnvelope.model_validate(
+                {
+                    "schema": "capture-envelope/v1",
+                    "capture_id": capture_id,
+                    "capture_kind": "field_note",
+                    "occurred_at": datetime.now(UTC).isoformat(),
+                    "producer": {
+                        "kind": producer_kind,
+                        "producer_id": socket.gethostname(),
+                        "actor_id": effective_actor,
+                        "run_id": None,
+                    },
+                    "scope": {},
+                    "source": None,
+                    "execution": None,
+                    "summary": {"observations": [content]},
+                    "artifacts": artifact_specs,
+                    "routing_hints": {
+                        "creation_mode": "create_update",
+                        "target_notebook": selected["name"],
+                        "target_notebook_id": selected["id"],
+                        "target_user": selected["user"],
+                    },
+                    "extensions": {
+                        "quick_note": {
+                            "title": title.strip(),
+                            "original_text": content,
+                            "human_confirmed": True,
+                        }
+                    },
+                }
+            )
+            canonical = canonical_json(envelope.model_dump(mode="json", by_alias=True))
+            manifest_digest = sha256_tag(canonical)
+            template = select_template(config, envelope.capture_kind)
+            if idempotency_key is None:
+                receipt, duplicate = store.create_capture(
+                    envelope,
+                    canonical,
+                    manifest_digest,
+                    template_id="matelab-manual-create/v1",
+                    template_version=template.version,
+                    template_sha256=template.sha256,
+                )
+            else:
+                receipt, duplicate = store.create_manual_capture(
+                    envelope,
+                    canonical,
+                    manifest_digest,
+                    template_id="matelab-manual-create/v1",
+                    template_version=template.version,
+                    template_sha256=template.sha256,
+                    operation=operation,
+                    idempotency_key=idempotency_key,
+                    request_sha256=request_fingerprint,
+                )
+            request_id, key = _audit_ids(
+                capture_id,
+                request.headers.get("X-Request-ID"),
+                idempotency_key,
+            )
+            store.record_request(
+                capture_id,
+                operation=operation,
+                request_id=request_id,
+                idempotency_key=key,
+            )
+            if receipt.state == SyncState.RECEIVING:
+                for index, upload in enumerate(selected_files, start=1):
+                    await ingress.receive(
+                        capture_id,
+                        f"attachment-{index:03d}",
+                        upload_stream(upload),
+                    )
+                receipt = store.commit_capture(capture_id)
+            wake_event.set()
+            return {
+                "capture_id": capture_id,
+                "sync_id": receipt.sync_id,
+                "state": receipt.state.value,
+                "status_url": f"{status_prefix}/{capture_id}",
+                "duplicate": duplicate,
             }
-        )
-        canonical = canonical_json(envelope.model_dump(mode="json", by_alias=True))
-        manifest_digest = sha256_tag(canonical)
-        template = select_template(config, envelope.capture_kind)
-        receipt, _duplicate = store.create_capture(
-            envelope,
-            canonical,
-            manifest_digest,
-            template_id="matelab-manual-create/v1",
-            template_version=template.version,
-            template_sha256=template.sha256,
-        )
-        request_id, key = _audit_ids(capture_id, request.headers.get("X-Request-ID"), None)
-        store.record_request(
-            capture_id,
-            operation=operation,
-            request_id=request_id,
-            idempotency_key=key,
-        )
-        for index, upload in enumerate(selected_files, start=1):
-            await ingress.receive(capture_id, f"attachment-{index:03d}", upload_stream(upload))
-        receipt = store.commit_capture(capture_id)
-        wake_event.set()
-        return {
-            "capture_id": capture_id,
-            "sync_id": receipt.sync_id,
-            "state": receipt.state.value,
-            "status_url": f"{status_prefix}/{capture_id}",
-        }
 
     @app.post(
         "/v1/ui/manual-submissions",
@@ -674,6 +768,7 @@ def create_app(
         notebook_name: Annotated[str, Form(min_length=1, max_length=255)],
         actor_id: Annotated[str | None, Form(max_length=255)] = None,
         attachments: Annotated[list[UploadFile] | None, File()] = None,
+        idempotency_key: str | None = Header(default=None),
     ) -> dict[str, Any]:
         return await perform_manual_submission(
             request,
@@ -686,6 +781,7 @@ def create_app(
             operation="gui_manual_submission",
             producer_kind="desktop_gui",
             status_prefix="/v1/ui/captures",
+            idempotency_key=idempotency_key,
         )
 
     @app.post(
@@ -702,6 +798,7 @@ def create_app(
         notebook_name: Annotated[str, Form(min_length=1, max_length=255)],
         actor_id: Annotated[str | None, Form(max_length=255)] = None,
         attachments: Annotated[list[UploadFile] | None, File()] = None,
+        idempotency_key: str | None = Header(default=None),
     ) -> dict[str, Any]:
         """Simple multipart endpoint for local programs that submit human-readable notes."""
         return await perform_manual_submission(
@@ -715,6 +812,7 @@ def create_app(
             operation="api_manual_submission",
             producer_kind="local_api",
             status_prefix="/v1/captures",
+            idempotency_key=idempotency_key,
         )
 
     @app.get("/healthz", tags=["operations"])
